@@ -97,8 +97,18 @@ jobs:
       private_subnet_ids: ${{ steps.tf-outputs.outputs.private_subnet_ids }}
       lambda_sg_id: ${{ steps.tf-outputs.outputs.lambda_sg_id }}
       dynamodb_table: ${{ steps.tf-outputs.outputs.dynamodb_table }}
+      dynamodb_table_arn: ${{ steps.tf-outputs.outputs.dynamodb_table_arn }}
       sns_peru_arn: ${{ steps.tf-outputs.outputs.sns_peru_arn }}
       sns_chile_arn: ${{ steps.tf-outputs.outputs.sns_chile_arn }}
+      sqs_queue_url_peru: ${{ steps.tf-outputs.outputs.sqs_queue_url_peru }}
+      sqs_queue_url_chile: ${{ steps.tf-outputs.outputs.sqs_queue_url_chile }}
+      sqs_queue_arn_peru: ${{ steps.tf-outputs.outputs.sqs_queue_arn_peru }}
+      sqs_queue_arn_chile: ${{ steps.tf-outputs.outputs.sqs_queue_arn_chile }}
+      sqs_completion_queue_url: ${{ steps.tf-outputs.outputs.sqs_completion_queue_url }}
+      sqs_completion_queue_arn: ${{ steps.tf-outputs.outputs.sqs_completion_queue_arn }}
+      eventbridge_bus_name: ${{ steps.tf-outputs.outputs.eventbridge_bus_name }}
+      rds_peru_secret_arn: ${{ steps.tf-outputs.outputs.rds_peru_secret_arn }}
+      rds_chile_secret_arn: ${{ steps.tf-outputs.outputs.rds_chile_secret_arn }}
     
     steps:
       - name: Checkout code
@@ -188,8 +198,18 @@ jobs:
           echo "private_subnet_ids=$PRIVATE_SUBNETS" >> $GITHUB_OUTPUT
           echo "lambda_sg_id=$(terraform output -raw lambda_security_group_id)" >> $GITHUB_OUTPUT
           echo "dynamodb_table=$(terraform output -raw dynamodb_table_name)" >> $GITHUB_OUTPUT
+          echo "dynamodb_table_arn=$(terraform output -raw dynamodb_table_arn)" >> $GITHUB_OUTPUT
           echo "sns_peru_arn=$(terraform output -raw sns_topic_arn_peru)" >> $GITHUB_OUTPUT
           echo "sns_chile_arn=$(terraform output -raw sns_topic_arn_chile)" >> $GITHUB_OUTPUT
+          echo "sqs_queue_url_peru=$(terraform output -raw sqs_queue_url_peru)" >> $GITHUB_OUTPUT
+          echo "sqs_queue_url_chile=$(terraform output -raw sqs_queue_url_chile)" >> $GITHUB_OUTPUT
+          echo "sqs_queue_arn_peru=$(terraform output -raw sqs_queue_arn_peru)" >> $GITHUB_OUTPUT
+          echo "sqs_queue_arn_chile=$(terraform output -raw sqs_queue_arn_chile)" >> $GITHUB_OUTPUT
+          echo "sqs_completion_queue_url=$(terraform output -raw sqs_completion_queue_url)" >> $GITHUB_OUTPUT
+          echo "sqs_completion_queue_arn=$(terraform output -raw sqs_completion_queue_arn)" >> $GITHUB_OUTPUT
+          echo "eventbridge_bus_name=$(terraform output -raw eventbridge_bus_name)" >> $GITHUB_OUTPUT
+          echo "rds_peru_secret_arn=$(terraform output -raw rds_peru_secret_arn)" >> $GITHUB_OUTPUT
+          echo "rds_chile_secret_arn=$(terraform output -raw rds_chile_secret_arn)" >> $GITHUB_OUTPUT
 
   # ===============================================
   # Deploy Lambda Functions (SAM)
@@ -262,8 +282,18 @@ jobs:
               PrivateSubnetIds="${{ needs.deploy-terraform.outputs.private_subnet_ids }}" \
               LambdaSecurityGroupId=${{ needs.deploy-terraform.outputs.lambda_sg_id }} \
               DynamoDBTableName=${{ needs.deploy-terraform.outputs.dynamodb_table }} \
+              DynamoDBTableArn=${{ needs.deploy-terraform.outputs.dynamodb_table_arn }} \
               SNSTopicArnPeru=${{ needs.deploy-terraform.outputs.sns_peru_arn }} \
               SNSTopicArnChile=${{ needs.deploy-terraform.outputs.sns_chile_arn }} \
+              SQSQueueUrlPeru=${{ needs.deploy-terraform.outputs.sqs_queue_url_peru }} \
+              SQSQueueUrlChile=${{ needs.deploy-terraform.outputs.sqs_queue_url_chile }} \
+              SQSQueueArnPeru=${{ needs.deploy-terraform.outputs.sqs_queue_arn_peru }} \
+              SQSQueueArnChile=${{ needs.deploy-terraform.outputs.sqs_queue_arn_chile }} \
+              SQSCompletionQueueUrl=${{ needs.deploy-terraform.outputs.sqs_completion_queue_url }} \
+              SQSCompletionQueueArn=${{ needs.deploy-terraform.outputs.sqs_completion_queue_arn }} \
+              EventBridgeBusName=${{ needs.deploy-terraform.outputs.eventbridge_bus_name }} \
+              RDSPeruSecretArn=${{ needs.deploy-terraform.outputs.rds_peru_secret_arn }} \
+              RDSChileSecretArn=${{ needs.deploy-terraform.outputs.rds_chile_secret_arn }} \
             --capabilities CAPABILITY_IAM \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset
