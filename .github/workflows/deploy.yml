@@ -162,7 +162,9 @@ jobs:
         working-directory: ./terraform
         run: |
           echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_OUTPUT
-          echo "private_subnet_ids=$(terraform output -raw private_subnet_ids)" >> $GITHUB_OUTPUT
+          # private_subnet_ids es una lista, usar -json y convertir a string separado por comas
+          PRIVATE_SUBNETS=$(terraform output -json private_subnet_ids | jq -r 'join(",")')
+          echo "private_subnet_ids=$PRIVATE_SUBNETS" >> $GITHUB_OUTPUT
           echo "lambda_sg_id=$(terraform output -raw lambda_security_group_id)" >> $GITHUB_OUTPUT
           echo "dynamodb_table=$(terraform output -raw dynamodb_table_name)" >> $GITHUB_OUTPUT
           echo "sns_peru_arn=$(terraform output -raw sns_topic_arn_peru)" >> $GITHUB_OUTPUT
