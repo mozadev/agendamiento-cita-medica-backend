@@ -205,6 +205,65 @@ jobs:
             echo "✅ DB Subnet Group no existe, Terraform lo creará"
           fi
           
+          # Importar DynamoDB Table si existe
+          TABLE_NAME="${PROJECT_NAME}-${ENV}-appointments"
+          if aws dynamodb describe-table --table-name "$TABLE_NAME" --region "$REGION" >/dev/null 2>&1; then
+            echo "📦 DynamoDB Table existe: $TABLE_NAME"
+            if terraform state show aws_dynamodb_table.appointments >/dev/null 2>&1; then
+              echo "✅ DynamoDB Table ya está en el estado de Terraform"
+            else
+              echo "🔄 Importando DynamoDB Table..."
+              terraform import aws_dynamodb_table.appointments "$TABLE_NAME" 2>&1 || \
+                echo "⚠️  No se pudo importar (continuando...)"
+            fi
+          else
+            echo "✅ DynamoDB Table no existe, Terraform la creará"
+          fi
+          
+          # Importar EventBridge Bus si existe
+          BUS_NAME="${PROJECT_NAME}-${ENV}-bus"
+          if aws events describe-event-bus --name "$BUS_NAME" --region "$REGION" >/dev/null 2>&1; then
+            echo "📦 EventBridge Bus existe: $BUS_NAME"
+            if terraform state show aws_cloudwatch_event_bus.main >/dev/null 2>&1; then
+              echo "✅ EventBridge Bus ya está en el estado de Terraform"
+            else
+              echo "🔄 Importando EventBridge Bus..."
+              terraform import aws_cloudwatch_event_bus.main "$BUS_NAME" 2>&1 || \
+                echo "⚠️  No se pudo importar (continuando...)"
+            fi
+          else
+            echo "✅ EventBridge Bus no existe, Terraform lo creará"
+          fi
+          
+          # Importar Secrets Manager si existen
+          SECRETS=(
+            "${PROJECT_NAME}-${ENV}-rds-peru-credentials"
+            "${PROJECT_NAME}-${ENV}-rds-chile-credentials"
+          )
+          
+          for SECRET_NAME in "${SECRETS[@]}"; do
+            if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --region "$REGION" >/dev/null 2>&1; then
+              echo "📦 Secret existe: $SECRET_NAME"
+              
+              # Determinar el nombre del recurso en Terraform
+              if [[ "$SECRET_NAME" == *"peru"* ]]; then
+                TERRAFORM_RESOURCE="aws_secretsmanager_secret.rds_peru"
+              else
+                TERRAFORM_RESOURCE="aws_secretsmanager_secret.rds_chile"
+              fi
+              
+              if terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
+                echo "✅ Secret ya está en el estado de Terraform"
+              else
+                echo "🔄 Importando Secret..."
+                terraform import "$TERRAFORM_RESOURCE" "$SECRET_NAME" 2>&1 || \
+                  echo "⚠️  No se pudo importar (continuando...)"
+              fi
+            else
+              echo "✅ Secret $SECRET_NAME no existe, Terraform lo creará"
+            fi
+          done
+          
           echo "✅ Proceso de importación completado"
 
       - name: Terraform Apply
