@@ -255,6 +255,7 @@ jobs:
         run: |
           sam deploy \
             --stack-name agendamiento-citas-${{ steps.determine-env.outputs.environment }} \
+            --resolve-s3 \
             --parameter-overrides \
               Environment=${{ steps.determine-env.outputs.environment }} \
               VpcId=${{ needs.deploy-terraform.outputs.vpc_id }} \
