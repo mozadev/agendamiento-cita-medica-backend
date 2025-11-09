@@ -1,7 +1,7 @@
 # Dependencies
 node_modules/
-package-lock.json
-yarn.lock
+# package-lock.json - NECESARIO para CI/CD con npm ci
+# yarn.lock - Si usas yarn, descomenta esta línea
 
 # Build outputs
 dist/
