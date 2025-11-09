@@ -1,0 +1,357 @@
+openapi: 3.0.3
+info:
+  title: Agendamiento de Citas Médicas API
+  description: |
+    API para el sistema de agendamiento de citas médicas para asegurados.
+    
+    ## Flujo de Agendamiento
+    
+    1. **Crear Agendamiento**: El cliente envía una solicitud POST a `/appointments` con los datos del asegurado, centro médico y país.
+    2. **Respuesta Inmediata**: La API responde inmediatamente con estado "pending" y un ID de agendamiento.
+    3. **Procesamiento Asíncrono**: El sistema procesa la solicitud de forma asíncrona:
+       - Guarda en DynamoDB
+       - Publica a SNS con filtro de país
+       - SNS enruta a SQS específico del país (PE o CL)
+       - Lambda del país procesa y guarda en RDS MySQL
+       - EventBridge notifica completación
+       - Estado se actualiza a "completed" en DynamoDB
+    4. **Consultar Estado**: El cliente puede consultar el estado del agendamiento mediante GET `/appointments/{insuredId}`
+    
+    ## Arquitectura
+    
+    - **API Gateway**: Punto de entrada HTTP
+    - **Lambda `appointment`**: Maneja creación y listado
+    - **DynamoDB**: Almacena estados de agendamiento
+    - **SNS/SQS**: Sistema de mensajería por país
+    - **Lambda `appointment_pe/cl`**: Procesamiento por país
+    - **RDS MySQL**: Base de datos por país
+    - **EventBridge**: Eventos de completación
+    
+  version: 1.0.0
+  contact:
+    name: Fabrizio Moza
+    email: fabriziomoza@example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.example.com/dev
+    description: Development environment
+  - url: https://api.example.com/prod
+    description: Production environment
+
+tags:
+  - name: appointments
+    description: Operaciones de agendamiento de citas médicas
+
+paths:
+  /appointments:
+    post:
+      tags:
+        - appointments
+      summary: Crear nuevo agendamiento
+      description: |
+        Registra una nueva solicitud de agendamiento de cita médica.
+        
+        **Flujo**:
+        1. Valida los datos de entrada
+        2. Crea el registro en DynamoDB con estado "pending"
+        3. Publica mensaje a SNS para procesamiento asíncrono
+        4. Retorna confirmación inmediata
+        
+        El procesamiento real ocurre de forma asíncrona. Use el endpoint GET para verificar el estado.
+      operationId: createAppointment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAppointmentRequest'
+            examples:
+              peru:
+                summary: Agendamiento en Perú
+                value:
+                  insuredId: "12345"
+                  scheduleId: 100
+                  countryISO: "PE"
+                  metadata:
+                    source: "web"
+                    priority: "normal"
+              chile:
+                summary: Agendamiento en Chile
+                value:
+                  insuredId: "00789"
+                  scheduleId: 200
+                  countryISO: "CL"
+      responses:
+        '201':
+          description: Agendamiento creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAppointmentResponse'
+              example:
+                appointmentId: "APT-abc12345"
+                insuredId: "12345"
+                scheduleId: 100
+                countryISO: "PE"
+                status: "pending"
+                message: "El agendamiento está en proceso"
+                createdAt: "2024-11-07T10:30:00.000Z"
+        '400':
+          description: Datos de entrada inválidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingFields:
+                  summary: Campos faltantes
+                  value:
+                    error: "Missing required fields: insuredId, scheduleId, countryISO"
+                invalidInsuredId:
+                  summary: InsuredId inválido
+                  value:
+                    error: "InsuredId must contain only numbers"
+                invalidCountry:
+                  summary: País inválido
+                  value:
+                    error: "Invalid country ISO code: US. Must be one of: PE, CL"
+        '500':
+          description: Error interno del servidor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /appointments/{insuredId}:
+    get:
+      tags:
+        - appointments
+      summary: Listar agendamientos por asegurado
+      description: |
+        Obtiene todos los agendamientos de un asegurado específico, incluyendo su estado actual.
+        
+        **Estados posibles**:
+        - `pending`: El agendamiento está siendo procesado
+        - `completed`: El agendamiento fue procesado exitosamente
+        - `failed`: El agendamiento falló durante el procesamiento
+        - `cancelled`: El agendamiento fue cancelado
+      operationId: listAppointments
+      parameters:
+        - name: insuredId
+          in: path
+          required: true
+          description: Código del asegurado (5 dígitos, puede tener ceros por delante)
+          schema:
+            type: string
+            pattern: '^\d{1,5}$'
+          examples:
+            standard:
+              summary: ID estándar
+              value: "12345"
+            withLeadingZeros:
+              summary: ID con ceros
+              value: "00123"
+      responses:
+        '200':
+          description: Lista de agendamientos obtenida exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAppointmentsResponse'
+              example:
+                appointments:
+                  - appointmentId: "APT-abc12345"
+                    insuredId: "12345"
+                    scheduleId: 100
+                    countryISO: "PE"
+                    status: "completed"
+                    createdAt: "2024-11-07T10:30:00.000Z"
+                    updatedAt: "2024-11-07T10:30:15.000Z"
+                    completedAt: "2024-11-07T10:30:15.000Z"
+                  - appointmentId: "APT-def67890"
+                    insuredId: "12345"
+                    scheduleId: 101
+                    countryISO: "PE"
+                    status: "pending"
+                    createdAt: "2024-11-07T11:00:00.000Z"
+                    updatedAt: "2024-11-07T11:00:00.000Z"
+                total: 2
+                insuredId: "12345"
+        '400':
+          description: InsuredId inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error interno del servidor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    CreateAppointmentRequest:
+      type: object
+      required:
+        - insuredId
+        - scheduleId
+        - countryISO
+      properties:
+        insuredId:
+          type: string
+          description: Código del asegurado (5 dígitos, puede tener ceros por delante)
+          pattern: '^\d{1,5}$'
+          example: "12345"
+        scheduleId:
+          type: integer
+          description: |
+            Identificador del espacio de agendamiento. El "Espacio" representa el conjunto de:
+            - Centro médico
+            - Especialidad
+            - Médico
+            - Fecha y hora
+          minimum: 1
+          example: 100
+        countryISO:
+          type: string
+          description: Código ISO del país (PE para Perú, CL para Chile)
+          enum:
+            - PE
+            - CL
+          example: "PE"
+        metadata:
+          type: object
+          description: Información adicional opcional
+          additionalProperties: true
+          example:
+            source: "web"
+            priority: "normal"
+            specialtyId: 3
+            medicId: 4
+            centerId: 4
+            date: "2024-30-09T12:30:00Z"
+
+    CreateAppointmentResponse:
+      type: object
+      properties:
+        appointmentId:
+          type: string
+          description: ID único del agendamiento generado
+          example: "APT-abc12345"
+        insuredId:
+          type: string
+          description: Código del asegurado (formato con 5 dígitos)
+          example: "12345"
+        scheduleId:
+          type: integer
+          description: Identificador del espacio de agendamiento
+          example: 100
+        countryISO:
+          type: string
+          description: Código ISO del país
+          enum:
+            - PE
+            - CL
+          example: "PE"
+        status:
+          type: string
+          description: Estado actual del agendamiento
+          enum:
+            - pending
+            - completed
+            - failed
+            - cancelled
+          example: "pending"
+        message:
+          type: string
+          description: Mensaje descriptivo del resultado
+          example: "El agendamiento está en proceso"
+        createdAt:
+          type: string
+          format: date-time
+          description: Fecha y hora de creación
+          example: "2024-11-07T10:30:00.000Z"
+
+    AppointmentDTO:
+      type: object
+      properties:
+        appointmentId:
+          type: string
+          description: ID único del agendamiento
+          example: "APT-abc12345"
+        insuredId:
+          type: string
+          description: Código del asegurado
+          example: "12345"
+        scheduleId:
+          type: integer
+          description: Identificador del espacio de agendamiento
+          example: 100
+        countryISO:
+          type: string
+          description: Código ISO del país
+          enum:
+            - PE
+            - CL
+          example: "PE"
+        status:
+          type: string
+          description: Estado actual del agendamiento
+          enum:
+            - pending
+            - completed
+            - failed
+            - cancelled
+          example: "completed"
+        createdAt:
+          type: string
+          format: date-time
+          description: Fecha y hora de creación
+          example: "2024-11-07T10:30:00.000Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Fecha y hora de última actualización
+          example: "2024-11-07T10:30:15.000Z"
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Fecha y hora de completación (si aplica)
+          example: "2024-11-07T10:30:15.000Z"
+        metadata:
+          type: object
+          nullable: true
+          description: Información adicional
+          additionalProperties: true
+
+    ListAppointmentsResponse:
+      type: object
+      properties:
+        appointments:
+          type: array
+          description: Lista de agendamientos
+          items:
+            $ref: '#/components/schemas/AppointmentDTO'
+        total:
+          type: integer
+          description: Número total de agendamientos
+          example: 2
+        insuredId:
+          type: string
+          description: Código del asegurado consultado
+          example: "12345"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Mensaje de error
+          example: "Invalid country ISO code: US. Must be one of: PE, CL"
+
