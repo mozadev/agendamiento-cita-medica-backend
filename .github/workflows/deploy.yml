@@ -161,37 +161,26 @@ jobs:
             -var="rds_cl_master_password=${{ secrets.RDS_CL_PASSWORD }}" \
             -out=tfplan
 
-      - name: Terraform Apply (con manejo de recursos existentes)
+      - name: Terraform Apply
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: ./terraform
         run: |
           # Aplicar el plan creado anteriormente (ya incluye todas las variables)
-          terraform apply -auto-approve tfplan 2>&1 | tee /tmp/terraform-apply.log
-          EXIT_CODE=${PIPESTATUS[0]}
-          
-          # Si hay errores de "already exists", continuar (los recursos ya están creados)
-          if [ $EXIT_CODE -ne 0 ]; then
-            if grep -q "already exists\|AlreadyExists\|ResourceInUseException" /tmp/terraform-apply.log; then
-              echo "⚠️  Algunos recursos ya existen, continuando..."
-              echo "Esto es normal en re-deploys. Los recursos existentes se mantendrán."
-              # Hacer refresh para actualizar el state con recursos existentes
-              terraform refresh -auto-approve \
-                -var="environment=${{ steps.determine-env.outputs.environment }}" \
-                -var="rds_pe_master_username=${{ secrets.RDS_PE_USERNAME }}" \
-                -var="rds_pe_master_password=${{ secrets.RDS_PE_PASSWORD }}" \
-                -var="rds_cl_master_username=${{ secrets.RDS_CL_USERNAME }}" \
-                -var="rds_cl_master_password=${{ secrets.RDS_CL_PASSWORD }}" || true
-            else
-              echo "❌ Error en Terraform Apply"
-              exit $EXIT_CODE
-            fi
-          fi
+          terraform apply -auto-approve tfplan
 
       - name: Get Terraform Outputs
         id: tf-outputs
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: ./terraform
         run: |
+          # Verificar que el state tiene outputs
+          if ! terraform output vpc_id > /dev/null 2>&1; then
+            echo "❌ Error: Terraform outputs no están disponibles"
+            echo "Esto puede ocurrir si Terraform apply falló"
+            exit 1
+          fi
+          
+          # Obtener outputs
           echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_OUTPUT
           # private_subnet_ids es una lista, usar -json y convertir a string separado por comas
           PRIVATE_SUBNETS=$(terraform output -json private_subnet_ids | jq -r 'join(",")')
@@ -210,6 +199,10 @@ jobs:
           echo "eventbridge_bus_name=$(terraform output -raw eventbridge_bus_name)" >> $GITHUB_OUTPUT
           echo "rds_peru_secret_arn=$(terraform output -raw rds_peru_secret_arn)" >> $GITHUB_OUTPUT
           echo "rds_chile_secret_arn=$(terraform output -raw rds_chile_secret_arn)" >> $GITHUB_OUTPUT
+          
+          # Mostrar outputs para debug
+          echo "✅ Terraform outputs obtenidos correctamente"
+          echo "VPC ID: $(terraform output -raw vpc_id)"
 
   # ===============================================
   # Deploy Lambda Functions (SAM)
