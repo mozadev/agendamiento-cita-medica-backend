@@ -161,6 +161,52 @@ jobs:
             -var="rds_cl_master_password=${{ secrets.RDS_CL_PASSWORD }}" \
             -out=tfplan
 
+      - name: Import Existing Resources (if any)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: ./terraform
+        continue-on-error: true
+        run: |
+          # Determinar nombre del proyecto basado en environment
+          ENV="${{ steps.determine-env.outputs.environment }}"
+          PROJECT_NAME="agendamiento-v2"
+          REGION="us-east-1"
+          
+          echo "🔍 Verificando recursos existentes que pueden necesitar importación..."
+          
+          # Importar DB Subnet Group si existe
+          DB_SUBNET_GROUP_NAME="${PROJECT_NAME}-${ENV}-db-subnet-group"
+          if aws rds describe-db-subnet-groups --db-subnet-group-name "$DB_SUBNET_GROUP_NAME" --region "$REGION" >/dev/null 2>&1; then
+            echo "📦 DB Subnet Group existe: $DB_SUBNET_GROUP_NAME"
+            
+            # Verificar si ya está en el estado de Terraform
+            if terraform state show aws_db_subnet_group.main >/dev/null 2>&1; then
+              echo "✅ DB Subnet Group ya está en el estado de Terraform"
+            else
+              echo "🔄 Importando DB Subnet Group al estado de Terraform..."
+              
+              # Importar el recurso
+              if terraform import aws_db_subnet_group.main "$DB_SUBNET_GROUP_NAME" 2>&1; then
+                echo "✅ DB Subnet Group importado exitosamente"
+                
+                # Verificar que las subnets coinciden (opcional, solo para logging)
+                EXISTING_SUBNETS=$(aws rds describe-db-subnet-groups \
+                  --db-subnet-group-name "$DB_SUBNET_GROUP_NAME" \
+                  --region "$REGION" \
+                  --query 'DBSubnetGroups[0].Subnets[].SubnetIdentifier' \
+                  --output text | tr '\t' ' ')
+                echo "ℹ️  Subnets en DB Subnet Group existente: $EXISTING_SUBNETS"
+                echo "ℹ️  Terraform verificará que las subnets coincidan en el plan"
+              else
+                echo "⚠️  No se pudo importar (puede ser por diferencias en configuración)"
+                echo "ℹ️  Terraform intentará crear uno nuevo o actualizar el existente"
+              fi
+            fi
+          else
+            echo "✅ DB Subnet Group no existe, Terraform lo creará"
+          fi
+          
+          echo "✅ Proceso de importación completado"
+
       - name: Terraform Apply
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: ./terraform
