@@ -17,7 +17,7 @@ variable "environment" {
 variable "project_name" {
   description = "Project name"
   type        = string
-  default     = "agendamiento-citas"
+  default     = "agendamiento-v2"
 }
 
 # ===============================================
