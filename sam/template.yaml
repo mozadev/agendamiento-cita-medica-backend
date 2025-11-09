@@ -1,0 +1,305 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Agendamiento Citas Médicas - Lambda Functions
+
+# ===============================================
+# Globals
+# ===============================================
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 512
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        NODE_ENV: !Ref Environment
+        DYNAMODB_TABLE: !Ref DynamoDBTableName
+        SNS_TOPIC_ARN_PERU: !Ref SNSTopicArnPeru
+        SNS_TOPIC_ARN_CHILE: !Ref SNSTopicArnChile
+        SQS_QUEUE_URL_PERU: !Ref SQSQueueUrlPeru
+        SQS_QUEUE_URL_CHILE: !Ref SQSQueueUrlChile
+        SQS_COMPLETION_QUEUE_URL: !Ref SQSCompletionQueueUrl
+        EVENTBRIDGE_BUS_NAME: !Ref EventBridgeBusName
+        RDS_PERU_SECRET_ARN: !Ref RDSPeruSecretArn
+        RDS_CHILE_SECRET_ARN: !Ref RDSChileSecretArn
+    VpcConfig:
+      SecurityGroupIds:
+        - !Ref LambdaSecurityGroupId
+      SubnetIds: !Split [',', !Ref PrivateSubnetIds]
+    Tracing: Active  # X-Ray tracing
+
+# ===============================================
+# Parameters (from Terraform outputs)
+# ===============================================
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+  
+  VpcId:
+    Type: String
+    Description: VPC ID from Terraform
+  
+  PrivateSubnetIds:
+    Type: CommaDelimitedList
+    Description: Private Subnet IDs from Terraform
+  
+  LambdaSecurityGroupId:
+    Type: String
+    Description: Lambda Security Group ID from Terraform
+  
+  DynamoDBTableName:
+    Type: String
+    Description: DynamoDB Table Name from Terraform
+  
+  DynamoDBTableArn:
+    Type: String
+    Description: DynamoDB Table ARN from Terraform
+  
+  SNSTopicArnPeru:
+    Type: String
+    Description: SNS Topic ARN for Peru
+  
+  SNSTopicArnChile:
+    Type: String
+    Description: SNS Topic ARN for Chile
+  
+  SQSQueueUrlPeru:
+    Type: String
+    Description: SQS Queue URL for Peru
+  
+  SQSQueueUrlChile:
+    Type: String
+    Description: SQS Queue URL for Chile
+  
+  SQSQueueArnPeru:
+    Type: String
+    Description: SQS Queue ARN for Peru
+  
+  SQSQueueArnChile:
+    Type: String
+    Description: SQS Queue ARN for Chile
+  
+  SQSCompletionQueueUrl:
+    Type: String
+    Description: SQS Completion Queue URL
+  
+  SQSCompletionQueueArn:
+    Type: String
+    Description: SQS Completion Queue ARN
+  
+  EventBridgeBusName:
+    Type: String
+    Description: EventBridge Bus Name
+  
+  RDSPeruSecretArn:
+    Type: String
+    Description: RDS Peru Secret ARN
+  
+  RDSChileSecretArn:
+    Type: String
+    Description: RDS Chile Secret ARN
+
+# ===============================================
+# Resources
+# ===============================================
+Resources:
+
+  # ===============================================
+  # Lambda: Appointment API
+  # ===============================================
+  AppointmentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-appointment-api'
+      CodeUri: ../dist/
+      Handler: infrastructure/lambdas/appointment/handler.createAppointment
+      Description: Create and list appointments
+      Events:
+        CreateAppointment:
+          Type: Api
+          Properties:
+            Path: /appointments
+            Method: POST
+            RestApiId: !Ref AppointmentApi
+        ListAppointments:
+          Type: Api
+          Properties:
+            Path: /appointments/{insuredId}
+            Method: GET
+            RestApiId: !Ref AppointmentApi
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDBTableName
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt SNSTopicArnPeru
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt SNSTopicArnChile
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Ref RDSPeruSecretArn
+                - !Ref RDSChileSecretArn
+
+  # ===============================================
+  # Lambda: Process Peru Appointments
+  # ===============================================
+  ProcessPeruAppointmentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-process-appointment-peru'
+      CodeUri: ../dist/
+      Handler: infrastructure/lambdas/appointment-country/handler.processPeruAppointment
+      Description: Process appointments for Peru (RDS MySQL)
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !Ref SQSQueueArnPeru
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 5
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref RDSPeruSecretArn
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/${EventBridgeBusName}'
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !Ref SQSQueueArnPeru
+
+  # ===============================================
+  # Lambda: Process Chile Appointments
+  # ===============================================
+  ProcessChileAppointmentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-process-appointment-chile'
+      CodeUri: ../dist/
+      Handler: infrastructure/lambdas/appointment-country/handler.processChileAppointment
+      Description: Process appointments for Chile (RDS MySQL)
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !Ref SQSQueueArnChile
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 5
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref RDSChileSecretArn
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/${EventBridgeBusName}'
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !Ref SQSQueueArnChile
+
+  # ===============================================
+  # Lambda: Complete Appointment
+  # ===============================================
+  CompleteAppointmentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-complete-appointment'
+      CodeUri: ../dist/
+      Handler: infrastructure/lambdas/appointment/handler.completeAppointment
+      Description: Mark appointments as completed in DynamoDB
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !Ref SQSCompletionQueueArn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 5
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDBTableName
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !Ref SQSCompletionQueueArn
+
+  # ===============================================
+  # API Gateway
+  # ===============================================
+  AppointmentApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub '${Environment}-appointments-api'
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+        AllowOrigin: "'*'"
+      TracingEnabled: true
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+
+# ===============================================
+# Outputs
+# ===============================================
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${AppointmentApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/'
+    Export:
+      Name: !Sub '${Environment}-ApiUrl'
+
+  AppointmentFunctionArn:
+    Description: Appointment Function ARN
+    Value: !GetAtt AppointmentFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-AppointmentFunctionArn'
+
+  ProcessPeruFunctionArn:
+    Description: Process Peru Function ARN
+    Value: !GetAtt ProcessPeruAppointmentFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-ProcessPeruFunctionArn'
+
+  ProcessChileFunctionArn:
+    Description: Process Chile Function ARN
+    Value: !GetAtt ProcessChileAppointmentFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-ProcessChileFunctionArn'
+
+  CompleteFunctionArn:
+    Description: Complete Appointment Function ARN
+    Value: !GetAtt CompleteAppointmentFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-CompleteFunctionArn'
+
