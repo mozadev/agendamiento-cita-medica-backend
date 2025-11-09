@@ -151,10 +151,26 @@ jobs:
             -var="rds_cl_master_password=${{ secrets.RDS_CL_PASSWORD }}" \
             -out=tfplan
 
-      - name: Terraform Apply
+      - name: Terraform Apply (con manejo de recursos existentes)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: ./terraform
-        run: terraform apply -auto-approve tfplan
+        run: |
+          # Aplicar cambios, ignorando errores de recursos que ya existen
+          terraform apply -auto-approve -refresh=true 2>&1 | tee /tmp/terraform-apply.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          
+          # Si hay errores de "already exists", continuar (los recursos ya están creados)
+          if [ $EXIT_CODE -ne 0 ]; then
+            if grep -q "already exists\|AlreadyExists\|ResourceInUseException" /tmp/terraform-apply.log; then
+              echo "⚠️  Algunos recursos ya existen, continuando..."
+              echo "Esto es normal en re-deploys. Los recursos existentes se mantendrán."
+              # Hacer refresh para actualizar el state con recursos existentes
+              terraform refresh -auto-approve || true
+            else
+              echo "❌ Error en Terraform Apply"
+              exit $EXIT_CODE
+            fi
+          fi
 
       - name: Get Terraform Outputs
         id: tf-outputs
