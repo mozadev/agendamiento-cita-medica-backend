@@ -150,17 +150,6 @@ jobs:
         working-directory: ./terraform
         run: terraform validate
 
-      - name: Terraform Plan
-        working-directory: ./terraform
-        run: |
-          terraform plan \
-            -var="environment=${{ steps.determine-env.outputs.environment }}" \
-            -var="rds_pe_master_username=${{ secrets.RDS_PE_USERNAME }}" \
-            -var="rds_pe_master_password=${{ secrets.RDS_PE_PASSWORD }}" \
-            -var="rds_cl_master_username=${{ secrets.RDS_CL_USERNAME }}" \
-            -var="rds_cl_master_password=${{ secrets.RDS_CL_PASSWORD }}" \
-            -out=tfplan
-
       - name: Import Existing Resources (if any)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: ./terraform
@@ -266,11 +255,24 @@ jobs:
           
           echo "✅ Proceso de importación completado"
 
+      - name: Terraform Plan (after import)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: ./terraform
+        run: |
+          # Crear plan DESPUÉS de la importación para incluir recursos importados
+          terraform plan \
+            -var="environment=${{ steps.determine-env.outputs.environment }}" \
+            -var="rds_pe_master_username=${{ secrets.RDS_PE_USERNAME }}" \
+            -var="rds_pe_master_password=${{ secrets.RDS_PE_PASSWORD }}" \
+            -var="rds_cl_master_username=${{ secrets.RDS_CL_USERNAME }}" \
+            -var="rds_cl_master_password=${{ secrets.RDS_CL_PASSWORD }}" \
+            -out=tfplan
+
       - name: Terraform Apply
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: ./terraform
         run: |
-          # Aplicar el plan creado anteriormente (ya incluye todas las variables)
+          # Aplicar el plan creado DESPUÉS de la importación (incluye recursos importados)
           terraform apply -auto-approve tfplan
 
       - name: Get Terraform Outputs
