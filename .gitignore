@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Build outputs
+dist/
+build/
+*.js
+*.js.map
+*.d.ts
+!jest.config.js
+
+# Serverless
+.serverless/
+.serverless_nextjs/
+.webpack/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# AWS
+.aws-sam/
+samconfig.toml
+
+# Documentation generated files
+docs/coverage/
+docs/generated/
+
+# Images (already in repo)
+*.jpeg
+*.jpg
+*.png
+*.pdf
+*.docx
+
