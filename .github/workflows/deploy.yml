@@ -38,11 +38,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Verify package-lock.json exists
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "❌ Error: package-lock.json not found!"
+            ls -la
+            exit 1
+          fi
+          echo "✅ package-lock.json found"
+          ls -lh package-lock.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -180,6 +191,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
