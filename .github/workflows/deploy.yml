@@ -1028,6 +1028,40 @@ jobs:
           
           echo "📊 Estado actual: $STACK_STATUS"
           
+          # Si el stack está siendo eliminado, esperar un poco más
+          if [ "$STACK_STATUS" == "DELETE_IN_PROGRESS" ]; then
+            echo ""
+            echo "⏳ Stack en proceso de eliminación..."
+            echo "   Esperando hasta 5 minutos adicionales para que termine..."
+            WAIT_ELAPSED=0
+            MAX_DELETE_WAIT=300  # 5 minutos adicionales
+            while [ $WAIT_ELAPSED -lt $MAX_DELETE_WAIT ]; do
+              sleep 30
+              WAIT_ELAPSED=$((WAIT_ELAPSED + 30))
+              STACK_STATUS=$(aws cloudformation describe-stacks \
+                --stack-name "$STACK_NAME" \
+                --region "$REGION" \
+                --query 'Stacks[0].StackStatus' \
+                --output text 2>/dev/null || echo "DELETED")
+              
+              if [ "$STACK_STATUS" == "DELETED" ] || [ "$STACK_STATUS" == "DOES_NOT_EXIST" ]; then
+                echo "✅ Stack eliminado completamente"
+                STACK_STATUS="DOES_NOT_EXIST"
+                break
+              elif [ "$STACK_STATUS" != "DELETE_IN_PROGRESS" ]; then
+                echo "⚠️  Estado cambió a: $STACK_STATUS"
+                break
+              fi
+              echo "  ⏳ Aún eliminando... (${WAIT_ELAPSED}s)"
+            done
+            
+            if [ "$STACK_STATUS" == "DELETE_IN_PROGRESS" ]; then
+              echo "⚠️  Stack aún en DELETE_IN_PROGRESS después de espera adicional"
+              echo "   Continuando - el deploy intentará crear el stack"
+              echo "   Si falla por conflicto, el siguiente deploy lo manejará"
+            fi
+          fi
+          
           # Estados que requieren eliminación del stack
           FAILED_STATES=("ROLLBACK_IN_PROGRESS" "ROLLBACK_COMPLETE" "ROLLBACK_FAILED" "DELETE_FAILED" "CREATE_FAILED" "UPDATE_ROLLBACK_IN_PROGRESS" "UPDATE_ROLLBACK_COMPLETE" "UPDATE_ROLLBACK_FAILED")
           
@@ -1057,11 +1091,12 @@ jobs:
               exit 1
             fi
             
-            echo "⏳ Esperando a que el stack se elimine completamente (máximo 10 minutos)..."
+            echo "⏳ Esperando a que el stack se elimine completamente (máximo 20 minutos)..."
+            echo "📝 Lambda en VPC puede tardar 15-20 minutos en eliminarse (ENIs, IPs privadas)"
             echo ""
             
-            # Esperar a que el stack se elimine (máximo 10 minutos)
-            MAX_WAIT=600
+            # Esperar a que el stack se elimine (máximo 20 minutos para Lambda en VPC)
+            MAX_WAIT=1200  # 20 minutos
             ELAPSED=0
             DOTS=0
             while [ $ELAPSED -lt $MAX_WAIT ]; do
@@ -1089,12 +1124,12 @@ jobs:
                 echo "💡 Intenta eliminarlo manualmente desde la consola de AWS"
                 exit 1
               elif [ "$CURRENT_STATUS" == "DELETE_IN_PROGRESS" ]; then
-                # Mostrar progreso
+                # Mostrar progreso cada 5 minutos (20 * 15s)
                 printf "."
                 DOTS=$((DOTS + 1))
-                if [ $DOTS -eq 40 ]; then
+                if [ $DOTS -eq 20 ]; then  # Cada 5 minutos (20 * 15s = 300s)
                   echo ""
-                  echo "  ⏳ Eliminación en progreso... ${ELAPSED}s"
+                  echo "  ⏳ Eliminación en progreso... ${ELAPSED}s (Lambda en VPC puede tardar)"
                   DOTS=0
                 fi
               else
@@ -1105,12 +1140,33 @@ jobs:
               ELAPSED=$((ELAPSED + 15))
             done
             
+            # Si alcanzamos el timeout, verificar estado final
             if [ $ELAPSED -ge $MAX_WAIT ]; then
-              echo ""
-              echo "⏱️  Timeout esperando eliminación del stack (${MAX_WAIT}s)"
-              echo "   Stack puede estar en proceso de eliminación aún"
-              echo "   Verifica manualmente en la consola de AWS"
-              exit 1
+              FINAL_STATUS=$(aws cloudformation describe-stacks \
+                --stack-name "$STACK_NAME" \
+                --region "$REGION" \
+                --query 'Stacks[0].StackStatus' \
+                --output text 2>/dev/null || echo "DELETED")
+              
+              if [ "$FINAL_STATUS" == "DELETED" ]; then
+                echo ""
+                echo "✅ Stack eliminado exitosamente (justo antes del timeout)"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              elif [ "$FINAL_STATUS" == "DELETE_IN_PROGRESS" ]; then
+                echo ""
+                echo "⚠️  Timeout alcanzado, pero stack aún en DELETE_IN_PROGRESS"
+                echo "   Esto es normal para Lambda en VPC (puede tardar hasta 20+ minutos)"
+                echo "   El siguiente deploy esperará o intentará eliminar nuevamente"
+                echo "   Continuando con el deploy..."
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                # NO salir con error - permitir que el deploy continúe
+                # El siguiente paso (Check and Fix) manejará esto
+              else
+                echo ""
+                echo "❌ Stack en estado inesperado: $FINAL_STATUS"
+                echo "   Verifica manualmente en la consola de AWS"
+                exit 1
+              fi
             fi
             
             # Pequeña espera adicional para asegurar que AWS esté listo
