@@ -137,12 +137,14 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref DynamoDBTableName
-        - SNSPublishMessagePolicy:
-            TopicArn: !Ref SNSTopicArnPeru
-        - SNSPublishMessagePolicy:
-            TopicArn: !Ref SNSTopicArnChile
         - Version: '2012-10-17'
           Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource:
+                - !Ref SNSTopicArnPeru
+                - !Ref SNSTopicArnChile
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
