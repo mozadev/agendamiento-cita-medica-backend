@@ -360,6 +360,23 @@ resource "aws_db_instance" "peru" {
       Country = "PE"
     }
   )
+
+  # Timeouts para operaciones de RDS
+  timeouts {
+    create = "40m"
+    update = "40m"
+    delete = "40m"
+  }
+
+  # Lifecycle para evitar modificaciones cuando la instancia no está disponible
+  lifecycle {
+    create_before_destroy = false
+    # Ignorar cambios en password después de la creación inicial
+    # (para evitar actualizaciones no deseadas después de importar)
+    ignore_changes = [
+      password,  # El password puede cambiar fuera de Terraform
+    ]
+  }
 }
 
 # ===============================================
@@ -400,6 +417,23 @@ resource "aws_db_instance" "chile" {
       Country = "CL"
     }
   )
+
+  # Timeouts para operaciones de RDS
+  timeouts {
+    create = "40m"
+    update = "40m"
+    delete = "40m"
+  }
+
+  # Lifecycle para evitar modificaciones cuando la instancia no está disponible
+  lifecycle {
+    create_before_destroy = false
+    # Ignorar cambios en password después de la creación inicial
+    # (para evitar actualizaciones no deseadas después de importar)
+    ignore_changes = [
+      password,  # El password puede cambiar fuera de Terraform
+    ]
+  }
 }
 
 # ===============================================

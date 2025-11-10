@@ -811,6 +811,65 @@ jobs:
             -var="rds_cl_master_password=${{ secrets.RDS_CL_PASSWORD }}" \
             -out=tfplan
 
+      - name: Wait for RDS Instances to be Available
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          ENV="${{ steps.determine-env.outputs.environment }}"
+          PROJECT_NAME="agendamiento-v2"
+          REGION="us-east-1"
+          
+          RDS_INSTANCES=(
+            "${PROJECT_NAME}-${ENV}-rds-pe"
+            "${PROJECT_NAME}-${ENV}-rds-cl"
+          )
+          
+          for RDS_INSTANCE_ID in "${RDS_INSTANCES[@]}"; do
+            echo "⏳ Esperando a que la instancia RDS $RDS_INSTANCE_ID esté disponible..."
+            
+            # Verificar si la instancia existe
+            if aws rds describe-db-instances --db-instance-identifier "$RDS_INSTANCE_ID" --region "$REGION" >/dev/null 2>&1; then
+              # Esperar hasta que la instancia esté en estado "available"
+              MAX_ATTEMPTS=30
+              ATTEMPT=0
+              
+              while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+                STATUS=$(aws rds describe-db-instances \
+                  --db-instance-identifier "$RDS_INSTANCE_ID" \
+                  --region "$REGION" \
+                  --query 'DBInstances[0].DBInstanceStatus' \
+                  --output text 2>/dev/null || echo "unknown")
+                
+                echo "  Estado actual: $STATUS (intento $((ATTEMPT + 1))/$MAX_ATTEMPTS)"
+                
+                if [ "$STATUS" == "available" ]; then
+                  echo "✅ Instancia $RDS_INSTANCE_ID está disponible"
+                  break
+                elif [ "$STATUS" == "modifying" ] || [ "$STATUS" == "backing-up" ] || [ "$STATUS" == "upgrading" ]; then
+                  echo "  ⏳ Instancia en proceso ($STATUS), esperando 30 segundos..."
+                  sleep 30
+                  ATTEMPT=$((ATTEMPT + 1))
+                else
+                  echo "  ⚠️  Estado inesperado: $STATUS"
+                  # Continuar de todas formas si no es un estado crítico
+                  if [ "$STATUS" != "unknown" ]; then
+                    break
+                  fi
+                  sleep 10
+                  ATTEMPT=$((ATTEMPT + 1))
+                fi
+              done
+              
+              if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+                echo "⚠️  Timeout esperando a que $RDS_INSTANCE_ID esté disponible"
+                echo "   Continuando de todas formas..."
+              fi
+            else
+              echo "ℹ️  Instancia $RDS_INSTANCE_ID no existe, será creada por Terraform"
+            fi
+          done
+          
+          echo "✅ Verificación de instancias RDS completada"
+
       - name: Terraform Apply
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: ./terraform
