@@ -971,6 +971,44 @@ jobs:
         working-directory: ./sam
         run: sam build
 
+      - name: Validate SAM Parameters
+        run: |
+          echo "🔍 Validando parámetros para SAM Deploy..."
+          
+          VPC_ID="${{ needs.deploy-terraform.outputs.vpc_id }}"
+          SUBNETS="${{ needs.deploy-terraform.outputs.private_subnet_ids }}"
+          SG_ID="${{ needs.deploy-terraform.outputs.lambda_sg_id }}"
+          
+          echo "VPC ID: $VPC_ID"
+          echo "Private Subnets: $SUBNETS"
+          echo "Security Group: $SG_ID"
+          
+          # Verificar VPC
+          if ! aws ec2 describe-vpcs --vpc-ids "$VPC_ID" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            echo "❌ VPC $VPC_ID no existe"
+            exit 1
+          fi
+          echo "✅ VPC existe"
+          
+          # Verificar Security Group
+          if ! aws ec2 describe-security-groups --group-ids "$SG_ID" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            echo "❌ Security Group $SG_ID no existe"
+            exit 1
+          fi
+          echo "✅ Security Group existe"
+          
+          # Verificar Subnets
+          IFS=',' read -ra SUBNET_ARRAY <<< "$SUBNETS"
+          for SUBNET in "${SUBNET_ARRAY[@]}"; do
+            if ! aws ec2 describe-subnets --subnet-ids "$SUBNET" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+              echo "❌ Subnet $SUBNET no existe"
+              exit 1
+            fi
+            echo "✅ Subnet $SUBNET existe"
+          done
+          
+          echo "✅ Todos los recursos de red validados correctamente"
+
       - name: Check and Fix CloudFormation Stack State
         run: |
           STACK_NAME="agendamiento-citas-${{ steps.determine-env.outputs.environment }}"

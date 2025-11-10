@@ -29,6 +29,9 @@ Globals:
         - !Ref LambdaSecurityGroupId
       SubnetIds: !Split [',', !Ref PrivateSubnetIds]
     Tracing: Active  # X-Ray tracing
+    # Políticas comunes para Lambda en VPC
+    Policies:
+      - VPCAccessPolicy: {}  # Permisos para crear/gestionar ENIs en VPC
 
 # ===============================================
 # Parameters (from Terraform outputs)
