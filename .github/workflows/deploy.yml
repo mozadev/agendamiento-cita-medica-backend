@@ -971,6 +971,70 @@ jobs:
         working-directory: ./sam
         run: sam build
 
+      - name: Check and Fix CloudFormation Stack State
+        run: |
+          STACK_NAME="agendamiento-citas-${{ steps.determine-env.outputs.environment }}"
+          REGION="${{ env.AWS_REGION }}"
+          
+          echo "🔍 Verificando estado del stack: $STACK_NAME"
+          
+          # Obtener estado del stack
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$REGION" \
+            --query 'Stacks[0].StackStatus' \
+            --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+          
+          echo "Estado actual: $STACK_STATUS"
+          
+          # Estados que requieren eliminación del stack
+          FAILED_STATES=("ROLLBACK_IN_PROGRESS" "ROLLBACK_COMPLETE" "ROLLBACK_FAILED" "DELETE_FAILED" "CREATE_FAILED" "UPDATE_ROLLBACK_IN_PROGRESS" "UPDATE_ROLLBACK_COMPLETE" "UPDATE_ROLLBACK_FAILED")
+          
+          if [[ " ${FAILED_STATES[@]} " =~ " ${STACK_STATUS} " ]]; then
+            echo "⚠️  Stack en estado fallido: $STACK_STATUS"
+            echo "🗑️  Eliminando stack para permitir nuevo deploy..."
+            
+            # Intentar eliminar el stack
+            aws cloudformation delete-stack \
+              --stack-name "$STACK_NAME" \
+              --region "$REGION"
+            
+            echo "⏳ Esperando a que el stack se elimine completamente..."
+            
+            # Esperar a que el stack se elimine (máximo 10 minutos)
+            MAX_WAIT=600
+            ELAPSED=0
+            while [ $ELAPSED -lt $MAX_WAIT ]; do
+              CURRENT_STATUS=$(aws cloudformation describe-stacks \
+                --stack-name "$STACK_NAME" \
+                --region "$REGION" \
+                --query 'Stacks[0].StackStatus' \
+                --output text 2>/dev/null || echo "DELETED")
+              
+              if [ "$CURRENT_STATUS" == "DELETED" ]; then
+                echo "✅ Stack eliminado exitosamente"
+                break
+              elif [ "$CURRENT_STATUS" == "DELETE_FAILED" ]; then
+                echo "❌ Error al eliminar stack"
+                echo "💡 Intenta eliminarlo manualmente desde la consola de AWS"
+                exit 1
+              else
+                echo "  Estado: $CURRENT_STATUS (esperando... ${ELAPSED}s)"
+                sleep 15
+                ELAPSED=$((ELAPSED + 15))
+              fi
+            done
+            
+            if [ $ELAPSED -ge $MAX_WAIT ]; then
+              echo "⏱️  Timeout esperando eliminación del stack"
+              echo "   Continuando de todas formas..."
+            fi
+          elif [ "$STACK_STATUS" == "DOES_NOT_EXIST" ]; then
+            echo "✅ Stack no existe, se creará uno nuevo"
+          else
+            echo "✅ Stack en estado válido: $STACK_STATUS"
+          fi
+
       - name: SAM Deploy
         id: sam-deploy
         working-directory: ./sam
