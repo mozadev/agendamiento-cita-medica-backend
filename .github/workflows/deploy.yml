@@ -336,7 +336,35 @@ jobs:
             fi
           fi
           
-          echo "✅ Limpieza de VPCs completada"
+          # Limpiar Elastic IPs no utilizados
+          echo ""
+          echo "🧹 Limpiando Elastic IPs no utilizados..."
+          UNUSED_EIPS=$(aws ec2 describe-addresses \
+            --region "$REGION" \
+            --query 'Addresses[?AssociationId==`null`].AllocationId' \
+            --output text 2>/dev/null || echo "")
+          
+          if [ ! -z "$UNUSED_EIPS" ]; then
+            EIP_COUNT=$(echo "$UNUSED_EIPS" | wc -w | tr -d ' ')
+            echo "📊 Elastic IPs sin asociar encontrados: $EIP_COUNT"
+            
+            # Liberar hasta dejar espacio para 2 nuevos (para NAT Gateways)
+            CURRENT_EIPS=$(aws ec2 describe-addresses --region "$REGION" --query 'length(Addresses)' --output text)
+            if [ "$CURRENT_EIPS" -ge 5 ]; then
+              echo "⚠️  Límite de Elastic IPs alcanzado ($CURRENT_EIPS/5). Liberando no utilizados..."
+              echo "$UNUSED_EIPS" | tr ' ' '\n' | head -n $((CURRENT_EIPS - 3)) | while read EIP; do
+                echo "  Liberando: $EIP"
+                aws ec2 release-address --allocation-id "$EIP" --region "$REGION" >/dev/null 2>&1 || true
+              done
+              echo "✅ Elastic IPs no utilizados liberados"
+            else
+              echo "✅ Hay espacio suficiente para Elastic IPs ($CURRENT_EIPS/5)"
+            fi
+          else
+            echo "✅ No hay Elastic IPs sin asociar"
+          fi
+          
+          echo "✅ Limpieza de VPCs y recursos completada"
 
       - name: Import Existing Resources (if any)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -444,6 +472,102 @@ jobs:
               fi
             fi
             
+            # Route Tables
+            RT_PUBLIC=$(aws ec2 describe-route-tables \
+              --region "$REGION" \
+              --filters "Name=vpc-id,Values=$EXISTING_VPC" "Name=tag:Name,Values=${PROJECT_NAME}-${ENV}-public-rt" \
+              --query 'RouteTables[0].RouteTableId' \
+              --output text 2>/dev/null || echo "None")
+            if [ "$RT_PUBLIC" != "None" ] && [ ! -z "$RT_PUBLIC" ]; then
+              if ! terraform state show aws_route_table.public >/dev/null 2>&1; then
+                terraform import aws_route_table.public "$RT_PUBLIC" 2>&1 || \
+                  echo "  ⚠️  No se pudo importar Route Table public"
+              fi
+            fi
+            
+            RT_DATABASE=$(aws ec2 describe-route-tables \
+              --region "$REGION" \
+              --filters "Name=vpc-id,Values=$EXISTING_VPC" "Name=tag:Name,Values=${PROJECT_NAME}-${ENV}-database-rt" \
+              --query 'RouteTables[0].RouteTableId' \
+              --output text 2>/dev/null || echo "None")
+            if [ "$RT_DATABASE" != "None" ] && [ ! -z "$RT_DATABASE" ]; then
+              if ! terraform state show aws_route_table.database >/dev/null 2>&1; then
+                terraform import aws_route_table.database "$RT_DATABASE" 2>&1 || \
+                  echo "  ⚠️  No se pudo importar Route Table database"
+              fi
+            fi
+            
+            # Route Tables privadas
+            for RT_INDEX in "0" "1"; do
+              RT_NAME="${PROJECT_NAME}-${ENV}-private-rt-$((RT_INDEX + 1))"
+              RT_PRIVATE=$(aws ec2 describe-route-tables \
+                --region "$REGION" \
+                --filters "Name=vpc-id,Values=$EXISTING_VPC" "Name=tag:Name,Values=$RT_NAME" \
+                --query 'RouteTables[0].RouteTableId' \
+                --output text 2>/dev/null || echo "None")
+              
+              if [ "$RT_PRIVATE" != "None" ] && [ ! -z "$RT_PRIVATE" ]; then
+                TERRAFORM_RESOURCE="aws_route_table.private[${RT_INDEX}]"
+                if ! terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
+                  terraform import "$TERRAFORM_RESOURCE" "$RT_PRIVATE" 2>&1 || \
+                    echo "  ⚠️  No se pudo importar Route Table private[$RT_INDEX]"
+                fi
+              fi
+            done
+            
+            # Route Table Associations (public, private, database)
+            for SUBNET_TYPE in "public" "private" "database"; do
+              for AZ_INDEX in "1" "2"; do
+                if [ "$AZ_INDEX" == "1" ]; then
+                  TERRAFORM_INDEX="0"
+                else
+                  TERRAFORM_INDEX="1"
+                fi
+                
+                SUBNET_NAME_PATTERN="${PROJECT_NAME}-${ENV}-${SUBNET_TYPE}-subnet-${AZ_INDEX}"
+                SUBNET_ID=$(aws ec2 describe-subnets \
+                  --region "$REGION" \
+                  --filters "Name=vpc-id,Values=$EXISTING_VPC" "Name=tag:Name,Values=$SUBNET_NAME_PATTERN" \
+                  --query 'Subnets[0].SubnetId' \
+                  --output text 2>/dev/null || echo "None")
+                
+                if [ "$SUBNET_ID" != "None" ] && [ ! -z "$SUBNET_ID" ]; then
+                  # Buscar asociación existente
+                  ASSOC_ID=$(aws ec2 describe-route-tables \
+                    --region "$REGION" \
+                    --filters "Name=association.subnet-id,Values=$SUBNET_ID" \
+                    --query 'RouteTables[0].Associations[?SubnetId==`'$SUBNET_ID'`].RouteTableAssociationId' \
+                    --output text 2>/dev/null || echo "None")
+                  
+                  if [ "$ASSOC_ID" != "None" ] && [ ! -z "$ASSOC_ID" ]; then
+                    TERRAFORM_RESOURCE="aws_route_table_association.${SUBNET_TYPE}[${TERRAFORM_INDEX}]"
+                    if ! terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
+                      terraform import "$TERRAFORM_RESOURCE" "$ASSOC_ID" 2>&1 || \
+                        echo "  ⚠️  No se pudo importar Route Table Association $SUBNET_TYPE[$TERRAFORM_INDEX]"
+                    fi
+                  fi
+                fi
+              done
+            done
+            
+            # Elastic IPs para NAT Gateways
+            for EIP_INDEX in "0" "1"; do
+              EIP_NAME="${PROJECT_NAME}-${ENV}-nat-eip-$((EIP_INDEX + 1))"
+              EIP_ALLOC_ID=$(aws ec2 describe-addresses \
+                --region "$REGION" \
+                --filters "Name=tag:Name,Values=$EIP_NAME" \
+                --query 'Addresses[0].AllocationId' \
+                --output text 2>/dev/null || echo "None")
+              
+              if [ "$EIP_ALLOC_ID" != "None" ] && [ ! -z "$EIP_ALLOC_ID" ]; then
+                TERRAFORM_RESOURCE="aws_eip.nat[${EIP_INDEX}]"
+                if ! terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
+                  terraform import "$TERRAFORM_RESOURCE" "$EIP_ALLOC_ID" 2>&1 || \
+                    echo "  ⚠️  No se pudo importar Elastic IP $EIP_INDEX"
+                fi
+              fi
+            done
+            
             echo "✅ Recursos relacionados de VPC importados (o ya en estado)"
           else
             echo "✅ VPC no existe, Terraform la creará"
@@ -537,6 +661,35 @@ jobs:
               fi
             else
               echo "✅ Secret $SECRET_NAME no existe, Terraform lo creará"
+            fi
+          done
+          
+          # Importar RDS Instances si existen
+          RDS_INSTANCES=(
+            "${PROJECT_NAME}-${ENV}-rds-pe"
+            "${PROJECT_NAME}-${ENV}-rds-cl"
+          )
+          
+          for RDS_INSTANCE_ID in "${RDS_INSTANCES[@]}"; do
+            if aws rds describe-db-instances --db-instance-identifier "$RDS_INSTANCE_ID" --region "$REGION" >/dev/null 2>&1; then
+              echo "📦 RDS Instance existe: $RDS_INSTANCE_ID"
+              
+              # Determinar el nombre del recurso en Terraform
+              if [[ "$RDS_INSTANCE_ID" == *"pe"* ]]; then
+                TERRAFORM_RESOURCE="aws_db_instance.peru"
+              else
+                TERRAFORM_RESOURCE="aws_db_instance.chile"
+              fi
+              
+              if terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
+                echo "✅ RDS Instance ya está en el estado de Terraform"
+              else
+                echo "🔄 Importando RDS Instance..."
+                terraform import "$TERRAFORM_RESOURCE" "$RDS_INSTANCE_ID" 2>&1 || \
+                  echo "⚠️  No se pudo importar (continuando...)"
+              fi
+            else
+              echo "✅ RDS Instance $RDS_INSTANCE_ID no existe, Terraform la creará"
             fi
           done
           
