@@ -1020,7 +1020,11 @@ jobs:
     name: Initialize RDS Databases
     needs: [deploy-terraform]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    if: false  # Deshabilitado: La inicialización de DB se hará manualmente
+    # Razón: Requiere que las instancias RDS estén completamente listas para aceptar conexiones
+    # y que los endpoints estén configurados como secrets
+    # Original: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    continue-on-error: true  # No fallar el deploy si este paso falla
     
     steps:
       - name: Checkout code

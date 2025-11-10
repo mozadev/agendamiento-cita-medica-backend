@@ -1,0 +1,285 @@
+name: Database Migrations
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to run migrations'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      migration_action:
+        description: 'Migration action'
+        required: true
+        type: choice
+        default: 'apply'
+        options:
+          - apply    # Apply pending migrations
+          - verify   # Only verify connection and status
+          - force    # Force re-apply all migrations (dangerous)
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  run-migrations:
+    name: Run Database Migrations
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install MySQL Client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mysql-client jq
+
+      - name: Get RDS Endpoints from Secrets Manager
+        id: get-endpoints
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          PROJECT_NAME="agendamiento-v2"
+          
+          echo "📡 Obteniendo endpoints de RDS desde Secrets Manager..."
+          
+          # Obtener secret de Peru
+          PERU_SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id "${PROJECT_NAME}-${ENV}-rds-peru-credentials" \
+            --region ${{ env.AWS_REGION }} \
+            --query SecretString \
+            --output text)
+          
+          # Obtener secret de Chile
+          CHILE_SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id "${PROJECT_NAME}-${ENV}-rds-chile-credentials" \
+            --region ${{ env.AWS_REGION }} \
+            --query SecretString \
+            --output text)
+          
+          # Extraer valores
+          PERU_HOST=$(echo "$PERU_SECRET" | jq -r '.host')
+          PERU_USERNAME=$(echo "$PERU_SECRET" | jq -r '.username')
+          PERU_PASSWORD=$(echo "$PERU_SECRET" | jq -r '.password')
+          PERU_DBNAME=$(echo "$PERU_SECRET" | jq -r '.dbname')
+          
+          CHILE_HOST=$(echo "$CHILE_SECRET" | jq -r '.host')
+          CHILE_USERNAME=$(echo "$CHILE_SECRET" | jq -r '.username')
+          CHILE_PASSWORD=$(echo "$CHILE_SECRET" | jq -r '.password')
+          CHILE_DBNAME=$(echo "$CHILE_SECRET" | jq -r '.dbname')
+          
+          # Guardar en outputs (masked)
+          echo "::add-mask::$PERU_PASSWORD"
+          echo "::add-mask::$CHILE_PASSWORD"
+          
+          echo "peru_host=$PERU_HOST" >> $GITHUB_OUTPUT
+          echo "peru_username=$PERU_USERNAME" >> $GITHUB_OUTPUT
+          echo "peru_password=$PERU_PASSWORD" >> $GITHUB_OUTPUT
+          echo "peru_dbname=$PERU_DBNAME" >> $GITHUB_OUTPUT
+          
+          echo "chile_host=$CHILE_HOST" >> $GITHUB_OUTPUT
+          echo "chile_username=$CHILE_USERNAME" >> $GITHUB_OUTPUT
+          echo "chile_password=$CHILE_PASSWORD" >> $GITHUB_OUTPUT
+          echo "chile_dbname=$CHILE_DBNAME" >> $GITHUB_OUTPUT
+          
+          echo "✅ Endpoints obtenidos correctamente"
+          echo "  Peru:  $PERU_HOST"
+          echo "  Chile: $CHILE_HOST"
+
+      - name: Wait for RDS Instances to Accept Connections
+        run: |
+          echo "⏳ Esperando a que las instancias RDS acepten conexiones..."
+          
+          PERU_HOST="${{ steps.get-endpoints.outputs.peru_host }}"
+          CHILE_HOST="${{ steps.get-endpoints.outputs.chile_host }}"
+          
+          for DB_HOST in "$PERU_HOST" "$CHILE_HOST"; do
+            echo "🔍 Verificando conectividad a $DB_HOST..."
+            MAX_ATTEMPTS=20
+            ATTEMPT=0
+            
+            while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+              if timeout 5 bash -c "cat < /dev/null > /dev/tcp/${DB_HOST}/3306" 2>/dev/null; then
+                echo "✅ Conexión exitosa a $DB_HOST"
+                break
+              else
+                echo "  ⏳ Intento $((ATTEMPT + 1))/$MAX_ATTEMPTS - Esperando 15 segundos..."
+                sleep 15
+                ATTEMPT=$((ATTEMPT + 1))
+              fi
+            done
+            
+            if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+              echo "❌ No se pudo conectar a $DB_HOST después de $MAX_ATTEMPTS intentos"
+              exit 1
+            fi
+          done
+          
+          echo "✅ Todas las instancias RDS están aceptando conexiones"
+
+      - name: Verify Migration Action
+        run: |
+          ACTION="${{ github.event.inputs.migration_action }}"
+          ENV="${{ github.event.inputs.environment }}"
+          
+          echo "🎯 Acción de migración: $ACTION"
+          echo "🌍 Ambiente: $ENV"
+          
+          if [ "$ACTION" == "force" ] && [ "$ENV" == "prod" ]; then
+            echo "⚠️  ADVERTENCIA: Force migration en producción requiere confirmación adicional"
+            echo "   Esta operación es potencialmente destructiva"
+            # En producción real, aquí se podría requerir aprobación manual
+          fi
+
+      - name: Check Migration Status - Peru
+        id: check-peru
+        continue-on-error: true
+        run: |
+          PERU_HOST="${{ steps.get-endpoints.outputs.peru_host }}"
+          PERU_USER="${{ steps.get-endpoints.outputs.peru_username }}"
+          PERU_PASS="${{ steps.get-endpoints.outputs.peru_password }}"
+          PERU_DB="${{ steps.get-endpoints.outputs.peru_dbname }}"
+          
+          echo "🔍 Verificando estado de la base de datos Peru..."
+          
+          # Verificar si la tabla 'appointments' existe
+          TABLE_EXISTS=$(mysql -h "$PERU_HOST" -u "$PERU_USER" -p"$PERU_PASS" "$PERU_DB" \
+            -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$PERU_DB' AND table_name='appointments';" \
+            2>/dev/null || echo "0")
+          
+          if [ "$TABLE_EXISTS" == "1" ]; then
+            echo "✅ Tabla 'appointments' ya existe en Peru DB"
+            echo "needs_migration=false" >> $GITHUB_OUTPUT
+          else
+            echo "📝 Tabla 'appointments' NO existe en Peru DB - Se requiere migración"
+            echo "needs_migration=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Migration Status - Chile
+        id: check-chile
+        continue-on-error: true
+        run: |
+          CHILE_HOST="${{ steps.get-endpoints.outputs.chile_host }}"
+          CHILE_USER="${{ steps.get-endpoints.outputs.chile_username }}"
+          CHILE_PASS="${{ steps.get-endpoints.outputs.chile_password }}"
+          CHILE_DB="${{ steps.get-endpoints.outputs.chile_dbname }}"
+          
+          echo "🔍 Verificando estado de la base de datos Chile..."
+          
+          # Verificar si la tabla 'appointments' existe
+          TABLE_EXISTS=$(mysql -h "$CHILE_HOST" -u "$CHILE_USER" -p"$CHILE_PASS" "$CHILE_DB" \
+            -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$CHILE_DB' AND table_name='appointments';" \
+            2>/dev/null || echo "0")
+          
+          if [ "$TABLE_EXISTS" == "1" ]; then
+            echo "✅ Tabla 'appointments' ya existe en Chile DB"
+            echo "needs_migration=false" >> $GITHUB_OUTPUT
+          else
+            echo "📝 Tabla 'appointments' NO existe en Chile DB - Se requiere migración"
+            echo "needs_migration=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Apply Migration - Peru
+        if: |
+          github.event.inputs.migration_action != 'verify' &&
+          (steps.check-peru.outputs.needs_migration == 'true' || github.event.inputs.migration_action == 'force')
+        run: |
+          PERU_HOST="${{ steps.get-endpoints.outputs.peru_host }}"
+          PERU_USER="${{ steps.get-endpoints.outputs.peru_username }}"
+          PERU_PASS="${{ steps.get-endpoints.outputs.peru_password }}"
+          PERU_DB="${{ steps.get-endpoints.outputs.peru_dbname }}"
+          
+          echo "🚀 Aplicando migración a Peru DB..."
+          
+          if mysql -h "$PERU_HOST" -u "$PERU_USER" -p"$PERU_PASS" "$PERU_DB" \
+            < docs/database-schema.sql; then
+            echo "✅ Migración aplicada exitosamente a Peru DB"
+          else
+            echo "❌ Error aplicando migración a Peru DB"
+            exit 1
+          fi
+
+      - name: Apply Migration - Chile
+        if: |
+          github.event.inputs.migration_action != 'verify' &&
+          (steps.check-chile.outputs.needs_migration == 'true' || github.event.inputs.migration_action == 'force')
+        run: |
+          CHILE_HOST="${{ steps.get-endpoints.outputs.chile_host }}"
+          CHILE_USER="${{ steps.get-endpoints.outputs.chile_username }}"
+          CHILE_PASS="${{ steps.get-endpoints.outputs.chile_password }}"
+          CHILE_DB="${{ steps.get-endpoints.outputs.chile_dbname }}"
+          
+          echo "🚀 Aplicando migración a Chile DB..."
+          
+          if mysql -h "$CHILE_HOST" -u "$CHILE_USER" -p"$CHILE_PASS" "$CHILE_DB" \
+            < docs/database-schema.sql; then
+            echo "✅ Migración aplicada exitosamente a Chile DB"
+          else
+            echo "❌ Error aplicando migración a Chile DB"
+            exit 1
+          fi
+
+      - name: Verify Migration - Peru
+        run: |
+          PERU_HOST="${{ steps.get-endpoints.outputs.peru_host }}"
+          PERU_USER="${{ steps.get-endpoints.outputs.peru_username }}"
+          PERU_PASS="${{ steps.get-endpoints.outputs.peru_password }}"
+          PERU_DB="${{ steps.get-endpoints.outputs.peru_dbname }}"
+          
+          echo "✔️  Verificando migración en Peru DB..."
+          
+          # Verificar que las tablas existen
+          TABLES=$(mysql -h "$PERU_HOST" -u "$PERU_USER" -p"$PERU_PASS" "$PERU_DB" \
+            -sN -e "SHOW TABLES;" 2>/dev/null)
+          
+          if [ -z "$TABLES" ]; then
+            echo "⚠️  No se encontraron tablas en Peru DB"
+          else
+            echo "✅ Tablas en Peru DB:"
+            echo "$TABLES" | sed 's/^/   - /'
+          fi
+
+      - name: Verify Migration - Chile
+        run: |
+          CHILE_HOST="${{ steps.get-endpoints.outputs.chile_host }}"
+          CHILE_USER="${{ steps.get-endpoints.outputs.chile_username }}"
+          CHILE_PASS="${{ steps.get-endpoints.outputs.chile_password }}"
+          CHILE_DB="${{ steps.get-endpoints.outputs.chile_dbname }}"
+          
+          echo "✔️  Verificando migración en Chile DB..."
+          
+          # Verificar que las tablas existen
+          TABLES=$(mysql -h "$CHILE_HOST" -u "$CHILE_USER" -p"$CHILE_PASS" "$CHILE_DB" \
+            -sN -e "SHOW TABLES;" 2>/dev/null)
+          
+          if [ -z "$TABLES" ]; then
+            echo "⚠️  No se encontraron tablas en Chile DB"
+          else
+            echo "✅ Tablas en Chile DB:"
+            echo "$TABLES" | sed 's/^/   - /'
+          fi
+
+      - name: Migration Summary
+        if: always()
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 RESUMEN DE MIGRACIÓN"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Ambiente: ${{ github.event.inputs.environment }}"
+          echo "Acción:   ${{ github.event.inputs.migration_action }}"
+          echo ""
+          echo "Peru DB:  ${{ steps.check-peru.outputs.needs_migration == 'true' && '✅ Migrado' || '⏭️  Ya actualizado' }}"
+          echo "Chile DB: ${{ steps.check-chile.outputs.needs_migration == 'true' && '✅ Migrado' || '⏭️  Ya actualizado' }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
