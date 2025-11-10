@@ -551,63 +551,71 @@ jobs:
                   if terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
                     echo "  ✅ Route Table Association $SUBNET_TYPE[$TERRAFORM_INDEX] ya está en estado"
                   else
-                    # Buscar la asociación: obtener todas las route tables y buscar la que tiene esta subnet
-                    ALL_RT_JSON=$(aws ec2 describe-route-tables \
+                    # Buscar la asociación: obtener route table que tiene esta subnet
+                    # Terraform requiere formato: subnet_id/route_table_id (NO RouteTableAssociationId)
+                    RT_WITH_SUBNET=$(aws ec2 describe-route-tables \
                       --region "$REGION" \
-                      --filters "Name=vpc-id,Values=$EXISTING_VPC" \
+                      --filters "Name=vpc-id,Values=$EXISTING_VPC" "Name=association.subnet-id,Values=$SUBNET_ID" \
+                      --query 'RouteTables[0]' \
                       --output json 2>/dev/null || echo "{}")
                     
-                    # Extraer el RouteTableAssociationId usando jq (garantizado que está instalado)
-                    ASSOC_ID=$(echo "$ALL_RT_JSON" | jq -r \
-                      ".RouteTables[] | .Associations[]? | select(.SubnetId==\"$SUBNET_ID\" and .Main==false) | .RouteTableAssociationId" \
-                      2>/dev/null | head -n 1 || echo "None")
+                    # Extraer RouteTableId usando jq
+                    ROUTE_TABLE_ID=$(echo "$RT_WITH_SUBNET" | jq -r \
+                      ".RouteTableId // empty" \
+                      2>/dev/null || echo "")
                     
-                    # Si no se encontró con jq, intentar método alternativo
-                    if [ "$ASSOC_ID" == "None" ] || [ -z "$ASSOC_ID" ] || [ "$ASSOC_ID" == "null" ]; then
-                      # Método alternativo: buscar directamente por subnet
-                      ASSOC_ID=$(aws ec2 describe-route-tables \
-                        --region "$REGION" \
-                        --filters "Name=vpc-id,Values=$EXISTING_VPC" "Name=association.subnet-id,Values=$SUBNET_ID" \
-                        --query 'RouteTables[0].Associations[?SubnetId==`'$SUBNET_ID'` && Main==`false`].RouteTableAssociationId' \
-                        --output text 2>/dev/null | tr '\t' '\n' | head -n 1 || echo "None")
-                    fi
+                    # Verificar que la asociación existe y no es la main
+                    IS_MAIN=$(echo "$RT_WITH_SUBNET" | jq -r \
+                      ".Associations[]? | select(.SubnetId==\"$SUBNET_ID\") | .Main" \
+                      2>/dev/null | head -n 1 || echo "true")
                     
-                    if [ "$ASSOC_ID" != "None" ] && [ ! -z "$ASSOC_ID" ] && [ "$ASSOC_ID" != "null" ] && [ "$ASSOC_ID" != "" ]; then
-                      echo "  🔄 Importando Route Table Association: $ASSOC_ID (subnet: $SUBNET_ID)"
-                      if terraform import "$TERRAFORM_RESOURCE" "$ASSOC_ID" 2>&1; then
+                    if [ ! -z "$ROUTE_TABLE_ID" ] && [ "$ROUTE_TABLE_ID" != "null" ] && [ "$IS_MAIN" == "false" ]; then
+                      # Formato correcto para Terraform: subnet_id/route_table_id
+                      IMPORT_ID="${SUBNET_ID}/${ROUTE_TABLE_ID}"
+                      echo "  🔄 Importando Route Table Association: $IMPORT_ID"
+                      echo "     (Subnet: $SUBNET_ID, Route Table: $ROUTE_TABLE_ID)"
+                      
+                      if terraform import "$TERRAFORM_RESOURCE" "$IMPORT_ID" 2>&1; then
                         echo "  ✅ Route Table Association $SUBNET_TYPE[$TERRAFORM_INDEX] importada exitosamente"
                       else
-                        echo "  ⚠️  Error al importar (puede ser que ya exista en estado con otro formato)"
-                        echo "     Verificando estado de Terraform..."
+                        echo "  ⚠️  Error al importar, verificando estado..."
                         terraform state list | grep "$TERRAFORM_RESOURCE" || echo "     No encontrado en estado"
                       fi
                     else
-                      echo "  ⚠️  No se pudo obtener RouteTableAssociationId para subnet $SUBNET_ID"
-                      echo "     Verificando si la subnet tiene asociación..."
-                      HAS_ASSOC=$(aws ec2 describe-route-tables \
-                        --region "$REGION" \
-                        --filters "Name=association.subnet-id,Values=$SUBNET_ID" \
-                        --query 'length(RouteTables)' \
-                        --output text 2>/dev/null || echo "0")
-                      if [ "$HAS_ASSOC" != "0" ] && [ "$HAS_ASSOC" != "None" ]; then
-                        echo "     ⚠️  La subnet SÍ tiene una asociación pero no se pudo obtener el ID"
-                        echo "     Esto causará error en terraform apply. Intentando obtener ID manualmente..."
-                        # Último intento: obtener todas las asociaciones y buscar
-                        ALL_ASSOCS=$(aws ec2 describe-route-tables \
-                          --region "$REGION" \
-                          --filters "Name=vpc-id,Values=$EXISTING_VPC" \
-                          --query 'RouteTables[*].Associations[*].[SubnetId,RouteTableAssociationId]' \
-                          --output json 2>/dev/null || echo "[]")
-                        FINAL_ASSOC_ID=$(echo "$ALL_ASSOCS" | jq -r \
-                          ".[] | .[]? | select(.[0]==\"$SUBNET_ID\") | .[1]" \
-                          2>/dev/null | head -n 1 || echo "None")
-                        if [ "$FINAL_ASSOC_ID" != "None" ] && [ ! -z "$FINAL_ASSOC_ID" ]; then
-                          echo "     ✅ ID encontrado: $FINAL_ASSOC_ID, importando..."
-                          terraform import "$TERRAFORM_RESOURCE" "$FINAL_ASSOC_ID" 2>&1 || \
-                            echo "     ❌ Falló la importación final"
-                        fi
+                      if [ "$IS_MAIN" == "true" ]; then
+                        echo "  ℹ️  La subnet $SUBNET_ID está asociada a la main route table (no necesita importación)"
                       else
-                        echo "     ℹ️  La subnet no tiene asociación, Terraform la creará"
+                        echo "  ⚠️  No se pudo obtener RouteTableId para subnet $SUBNET_ID"
+                        echo "     Verificando si la subnet tiene asociación..."
+                        HAS_ASSOC=$(aws ec2 describe-route-tables \
+                          --region "$REGION" \
+                          --filters "Name=association.subnet-id,Values=$SUBNET_ID" \
+                          --query 'length(RouteTables)' \
+                          --output text 2>/dev/null || echo "0")
+                        if [ "$HAS_ASSOC" != "0" ] && [ "$HAS_ASSOC" != "None" ]; then
+                          echo "     ⚠️  La subnet SÍ tiene una asociación, intentando método alternativo..."
+                          # Método alternativo: obtener todas las route tables y buscar
+                          ALL_RT_JSON=$(aws ec2 describe-route-tables \
+                            --region "$REGION" \
+                            --filters "Name=vpc-id,Values=$EXISTING_VPC" \
+                            --output json 2>/dev/null || echo "{}")
+                          
+                          # Buscar route table y subnet ID
+                          RT_ID_ALT=$(echo "$ALL_RT_JSON" | jq -r \
+                            ".RouteTables[] | select(.Associations[]?.SubnetId==\"$SUBNET_ID\" and .Associations[]?.Main==false) | .RouteTableId" \
+                            2>/dev/null | head -n 1 || echo "None")
+                          
+                          if [ "$RT_ID_ALT" != "None" ] && [ ! -z "$RT_ID_ALT" ]; then
+                            IMPORT_ID_ALT="${SUBNET_ID}/${RT_ID_ALT}"
+                            echo "     ✅ Route Table encontrada: $RT_ID_ALT, importando con formato: $IMPORT_ID_ALT"
+                            terraform import "$TERRAFORM_RESOURCE" "$IMPORT_ID_ALT" 2>&1 || \
+                              echo "     ❌ Falló la importación alternativa"
+                          else
+                            echo "     ❌ No se pudo encontrar Route Table para esta subnet"
+                          fi
+                        else
+                          echo "     ℹ️  La subnet no tiene asociación, Terraform la creará"
+                        fi
                       fi
                     fi
                   fi
