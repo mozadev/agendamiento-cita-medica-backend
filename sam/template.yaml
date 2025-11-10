@@ -47,8 +47,8 @@ Parameters:
     Description: VPC ID from Terraform
   
   PrivateSubnetIds:
-    Type: CommaDelimitedList
-    Description: Private Subnet IDs from Terraform
+    Type: String
+    Description: Private Subnet IDs from Terraform (comma-separated)
   
   LambdaSecurityGroupId:
     Type: String
