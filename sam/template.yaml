@@ -138,9 +138,9 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref DynamoDBTableName
         - SNSPublishMessagePolicy:
-            TopicName: !GetAtt SNSTopicArnPeru
+            TopicArn: !Ref SNSTopicArnPeru
         - SNSPublishMessagePolicy:
-            TopicName: !GetAtt SNSTopicArnChile
+            TopicArn: !Ref SNSTopicArnChile
         - Version: '2012-10-17'
           Statement:
             - Effect: Allow
