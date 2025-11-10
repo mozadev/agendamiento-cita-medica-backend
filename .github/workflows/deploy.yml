@@ -342,6 +342,13 @@ jobs:
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: ./terraform
         continue-on-error: true
+        env:
+          # Pasar variables de RDS como environment variables para terraform import
+          TF_VAR_environment: ${{ steps.determine-env.outputs.environment }}
+          TF_VAR_rds_pe_master_username: ${{ secrets.RDS_PE_USERNAME }}
+          TF_VAR_rds_pe_master_password: ${{ secrets.RDS_PE_PASSWORD }}
+          TF_VAR_rds_cl_master_username: ${{ secrets.RDS_CL_USERNAME }}
+          TF_VAR_rds_cl_master_password: ${{ secrets.RDS_CL_PASSWORD }}
         run: |
           # Determinar nombre del proyecto basado en environment
           ENV="${{ steps.determine-env.outputs.environment }}"
