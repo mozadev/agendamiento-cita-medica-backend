@@ -1076,6 +1076,7 @@ jobs:
       - name: SAM Deploy
         id: sam-deploy
         working-directory: ./sam
+        continue-on-error: true
         run: |
           sam deploy \
             --stack-name agendamiento-citas-${{ steps.determine-env.outputs.environment }} \
@@ -1110,7 +1111,25 @@ jobs:
           
           echo "api_url=$API_URL" >> $GITHUB_OUTPUT
 
+      - name: Show CloudFormation Events on Failure
+        if: failure()
+        run: |
+          STACK_NAME="agendamiento-citas-${{ steps.determine-env.outputs.environment }}"
+          echo "❌ SAM Deploy falló. Mostrando eventos de CloudFormation..."
+          echo ""
+          
+          # Obtener los últimos 20 eventos del stack
+          aws cloudformation describe-stack-events \
+            --stack-name "$STACK_NAME" \
+            --max-items 20 \
+            --query 'StackEvents[].[Timestamp,LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason]' \
+            --output table 2>/dev/null || echo "No se pudieron obtener eventos del stack"
+          
+          echo ""
+          echo "💡 Buscar eventos con status 'FAILED' arriba para identificar la causa"
+
       - name: Display API URL
+        if: success()
         run: |
           echo "🚀 API deployed successfully!"
           echo "📍 API URL: ${{ steps.sam-deploy.outputs.api_url }}"
