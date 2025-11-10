@@ -150,6 +150,194 @@ jobs:
         working-directory: ./terraform
         run: terraform validate
 
+      - name: Cleanup Duplicate VPCs
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        run: |
+          ENV="${{ steps.determine-env.outputs.environment }}"
+          PROJECT_NAME="agendamiento-v2"
+          REGION="us-east-1"
+          VPC_NAME="${PROJECT_NAME}-${ENV}-vpc"
+          
+          echo "🧹 Limpiando VPCs duplicadas/viejas..."
+          
+          # Obtener todas las VPCs con el mismo nombre
+          VPC_IDS=$(aws ec2 describe-vpcs \
+            --region "$REGION" \
+            --filters "Name=tag:Name,Values=$VPC_NAME" \
+            --query 'Vpcs[].[VpcId,CreationDate]' \
+            --output text | sort -k2 -r)
+          
+          if [ -z "$VPC_IDS" ]; then
+            echo "✅ No hay VPCs duplicadas con nombre: $VPC_NAME"
+          else
+            echo "📊 VPCs encontradas con nombre $VPC_NAME:"
+            echo "$VPC_IDS" | while read VPC_ID CREATION_DATE; do
+              echo "  - $VPC_ID (creada: $CREATION_DATE)"
+            done
+            
+            # Contar VPCs
+            VPC_COUNT=$(echo "$VPC_IDS" | wc -l | tr -d ' ')
+            
+            if [ "$VPC_COUNT" -gt 1 ]; then
+              echo ""
+              echo "🗑️  Eliminando VPCs duplicadas (manteniendo la más reciente)..."
+              
+              # Eliminar todas excepto la primera (más reciente)
+              echo "$VPC_IDS" | tail -n +2 | while read VPC_ID CREATION_DATE; do
+                echo "  Eliminando VPC duplicada: $VPC_ID"
+                
+                # Verificar si tiene recursos en uso
+                RDS_COUNT=$(aws rds describe-db-instances --region "$REGION" \
+                  --query "length(DBInstances[?DBSubnetGroup.VpcId=='$VPC_ID'])" \
+                  --output text 2>/dev/null || echo "0")
+                
+                if [ "$RDS_COUNT" -gt 0 ]; then
+                  echo "    ⚠️  VPC tiene $RDS_COUNT instancias RDS, no se eliminará"
+                else
+                  # Eliminar recursos de la VPC
+                  echo "    🗑️  Eliminando recursos de VPC $VPC_ID..."
+                  
+                  # Eliminar NAT Gateways
+                  NAT_GWS=$(aws ec2 describe-nat-gateways --region "$REGION" \
+                    --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available,pending" \
+                    --query 'NatGateways[].NatGatewayId' --output text 2>/dev/null || echo "")
+                  for NAT in $NAT_GWS; do
+                    aws ec2 delete-nat-gateway --nat-gateway-id "$NAT" --region "$REGION" >/dev/null 2>&1 && \
+                      echo "      ✅ NAT Gateway $NAT eliminándose..." || true
+                  done
+                  
+                  # Desconectar y eliminar Internet Gateways
+                  IGW=$(aws ec2 describe-internet-gateways --region "$REGION" \
+                    --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+                    --query 'InternetGateways[0].InternetGatewayId' --output text 2>/dev/null || echo "None")
+                  if [ "$IGW" != "None" ] && [ ! -z "$IGW" ]; then
+                    aws ec2 detach-internet-gateway --internet-gateway-id "$IGW" --vpc-id "$VPC_ID" --region "$REGION" >/dev/null 2>&1 || true
+                    aws ec2 delete-internet-gateway --internet-gateway-id "$IGW" --region "$REGION" >/dev/null 2>&1 && \
+                      echo "      ✅ Internet Gateway eliminado" || true
+                  fi
+                  
+                  # Eliminar Subnets
+                  SUBNETS=$(aws ec2 describe-subnets --region "$REGION" \
+                    --filters "Name=vpc-id,Values=$VPC_ID" \
+                    --query 'Subnets[].SubnetId' --output text 2>/dev/null || echo "")
+                  for SUBNET in $SUBNETS; do
+                    aws ec2 delete-subnet --subnet-id "$SUBNET" --region "$REGION" >/dev/null 2>&1 || true
+                  done
+                  [ ! -z "$SUBNETS" ] && echo "      ✅ Subnets eliminadas" || true
+                  
+                  # Eliminar Security Groups (excepto default)
+                  SGS=$(aws ec2 describe-security-groups --region "$REGION" \
+                    --filters "Name=vpc-id,Values=$VPC_ID" \
+                    --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null || echo "")
+                  for SG in $SGS; do
+                    aws ec2 delete-security-group --group-id "$SG" --region "$REGION" >/dev/null 2>&1 || true
+                  done
+                  [ ! -z "$SGS" ] && echo "      ✅ Security Groups eliminados" || true
+                  
+                  # Eliminar Route Tables (excepto main)
+                  RTS=$(aws ec2 describe-route-tables --region "$REGION" \
+                    --filters "Name=vpc-id,Values=$VPC_ID" \
+                    --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text 2>/dev/null || echo "")
+                  for RT in $RTS; do
+                    # Desasociar de subnets
+                    ASSOCS=$(aws ec2 describe-route-tables --region "$REGION" \
+                      --route-table-ids "$RT" \
+                      --query 'RouteTables[0].Associations[?SubnetId!=`null`].RouteTableAssociationId' \
+                      --output text 2>/dev/null || echo "")
+                    for ASSOC in $ASSOCS; do
+                      aws ec2 disassociate-route-table --association-id "$ASSOC" --region "$REGION" >/dev/null 2>&1 || true
+                    done
+                    aws ec2 delete-route-table --route-table-id "$RT" --region "$REGION" >/dev/null 2>&1 || true
+                  done
+                  [ ! -z "$RTS" ] && echo "      ✅ Route Tables eliminadas" || true
+                  
+                  # Intentar eliminar VPC
+                  sleep 5  # Esperar a que recursos se eliminen
+                  if aws ec2 delete-vpc --vpc-id "$VPC_ID" --region "$REGION" 2>&1; then
+                    echo "      ✅ VPC $VPC_ID eliminada exitosamente"
+                  else
+                    echo "      ⚠️  VPC $VPC_ID aún tiene dependencias (se reintentará en próximo deploy)"
+                  fi
+                fi
+              done
+            else
+              echo "✅ Solo hay 1 VPC, no hay duplicadas"
+            fi
+          fi
+          
+          # Verificar límite de VPCs
+          TOTAL_VPCS=$(aws ec2 describe-vpcs --region "$REGION" --query 'length(Vpcs)' --output text)
+          echo ""
+          echo "📊 Total VPCs en cuenta: $TOTAL_VPCS / 5 (límite)"
+          
+          if [ "$TOTAL_VPCS" -ge 5 ]; then
+            echo "⚠️  Límite de VPCs alcanzado. Limpiando VPCs viejas de proyectos anteriores..."
+            
+            # Buscar VPCs viejas de agendamiento-citas (proyecto anterior)
+            OLD_VPCS=$(aws ec2 describe-vpcs \
+              --region "$REGION" \
+              --filters "Name=tag:Name,Values=agendamiento-citas-*-vpc" \
+              --query 'Vpcs[].[VpcId,CreationDate]' \
+              --output text | sort -k2)
+            
+            if [ ! -z "$OLD_VPCS" ]; then
+              echo "🗑️  Eliminando VPCs viejas de agendamiento-citas..."
+              echo "$OLD_VPCS" | head -n 1 | while read OLD_VPC_ID CREATION_DATE; do
+                echo "  Eliminando VPC vieja: $OLD_VPC_ID"
+                
+                # Verificar si tiene RDS
+                RDS_COUNT=$(aws rds describe-db-instances --region "$REGION" \
+                  --query "length(DBInstances[?DBSubnetGroup.VpcId=='$OLD_VPC_ID'])" \
+                  --output text 2>/dev/null || echo "0")
+                
+                if [ "$RDS_COUNT" -gt 0 ]; then
+                  echo "    ⚠️  VPC tiene $RDS_COUNT instancias RDS, no se eliminará"
+                else
+                  # Eliminar recursos (misma lógica que arriba)
+                  echo "    🗑️  Eliminando recursos..."
+                  
+                  # NAT Gateways
+                  NAT_GWS=$(aws ec2 describe-nat-gateways --region "$REGION" \
+                    --filter "Name=vpc-id,Values=$OLD_VPC_ID" "Name=state,Values=available,pending" \
+                    --query 'NatGateways[].NatGatewayId' --output text 2>/dev/null || echo "")
+                  for NAT in $NAT_GWS; do
+                    aws ec2 delete-nat-gateway --nat-gateway-id "$NAT" --region "$REGION" >/dev/null 2>&1 || true
+                  done
+                  
+                  # Internet Gateways
+                  IGW=$(aws ec2 describe-internet-gateways --region "$REGION" \
+                    --filters "Name=attachment.vpc-id,Values=$OLD_VPC_ID" \
+                    --query 'InternetGateways[0].InternetGatewayId' --output text 2>/dev/null || echo "None")
+                  if [ "$IGW" != "None" ] && [ ! -z "$IGW" ]; then
+                    aws ec2 detach-internet-gateway --internet-gateway-id "$IGW" --vpc-id "$OLD_VPC_ID" --region "$REGION" >/dev/null 2>&1 || true
+                    aws ec2 delete-internet-gateway --internet-gateway-id "$IGW" --region "$REGION" >/dev/null 2>&1 || true
+                  fi
+                  
+                  # Subnets, Security Groups, Route Tables (simplificado)
+                  aws ec2 describe-subnets --region "$REGION" --filters "Name=vpc-id,Values=$OLD_VPC_ID" \
+                    --query 'Subnets[].SubnetId' --output text 2>/dev/null | tr '\t' '\n' | \
+                    xargs -I {} aws ec2 delete-subnet --subnet-id {} --region "$REGION" >/dev/null 2>&1 || true
+                  
+                  aws ec2 describe-security-groups --region "$REGION" \
+                    --filters "Name=vpc-id,Values=$OLD_VPC_ID" \
+                    --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null | \
+                    tr '\t' '\n' | xargs -I {} aws ec2 delete-security-group --group-id {} --region "$REGION" >/dev/null 2>&1 || true
+                  
+                  # Intentar eliminar VPC
+                  sleep 5
+                  if aws ec2 delete-vpc --vpc-id "$OLD_VPC_ID" --region "$REGION" 2>&1; then
+                    echo "    ✅ VPC $OLD_VPC_ID eliminada"
+                  else
+                    echo "    ⚠️  VPC $OLD_VPC_ID aún tiene dependencias"
+                  fi
+                fi
+              done
+            fi
+          fi
+          
+          echo "✅ Limpieza de VPCs completada"
+
       - name: Import Existing Resources (if any)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: ./terraform
@@ -161,6 +349,27 @@ jobs:
           REGION="us-east-1"
           
           echo "🔍 Verificando recursos existentes que pueden necesitar importación..."
+          
+          # Importar VPC si existe
+          VPC_NAME="${PROJECT_NAME}-${ENV}-vpc"
+          EXISTING_VPC=$(aws ec2 describe-vpcs \
+            --region "$REGION" \
+            --filters "Name=tag:Name,Values=$VPC_NAME" \
+            --query 'Vpcs[0].VpcId' \
+            --output text)
+          
+          if [ ! -z "$EXISTING_VPC" ] && [ "$EXISTING_VPC" != "None" ]; then
+            echo "📦 VPC existe: $EXISTING_VPC ($VPC_NAME)"
+            if terraform state show aws_vpc.main >/dev/null 2>&1; then
+              echo "✅ VPC ya está en el estado de Terraform"
+            else
+              echo "🔄 Importando VPC al estado de Terraform..."
+              terraform import aws_vpc.main "$EXISTING_VPC" 2>&1 || \
+                echo "⚠️  No se pudo importar (continuando...)"
+            fi
+          else
+            echo "✅ VPC no existe, Terraform la creará"
+          fi
           
           # Importar DB Subnet Group si existe
           DB_SUBNET_GROUP_NAME="${PROJECT_NAME}-${ENV}-db-subnet-group"
