@@ -1130,7 +1130,13 @@ jobs:
 
       - name: SAM Deploy
         working-directory: ./sam
+        timeout-minutes: 30
         run: |
+          echo "🚀 Iniciando SAM Deploy..."
+          echo "⏱️  Timeout configurado: 30 minutos"
+          echo "📝 Lambda en VPC puede tardar 10-15 minutos en primera creación"
+          echo ""
+          
           sam deploy \
             --stack-name agendamiento-citas-${{ steps.determine-env.outputs.environment }} \
             --resolve-s3 \
@@ -1154,7 +1160,17 @@ jobs:
               RDSChileSecretArn=${{ needs.deploy-terraform.outputs.rds_chile_secret_arn }} \
             --capabilities CAPABILITY_IAM \
             --no-confirm-changeset \
-            --no-fail-on-empty-changeset
+            --no-fail-on-empty-changeset \
+            --debug 2>&1 | tee sam-deploy.log || {
+              echo ""
+              echo "❌ SAM Deploy falló"
+              echo "📋 Últimas 50 líneas del log:"
+              tail -50 sam-deploy.log
+              exit 1
+            }
+          
+          echo ""
+          echo "✅ SAM Deploy completado exitosamente"
 
       - name: Get API URL
         id: sam-deploy
