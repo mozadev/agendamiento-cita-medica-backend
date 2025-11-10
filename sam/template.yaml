@@ -29,9 +29,6 @@ Globals:
         - !Ref LambdaSecurityGroupId
       SubnetIds: !Split [',', !Ref PrivateSubnetIds]
     Tracing: Active  # X-Ray tracing
-    # Políticas comunes para Lambda en VPC
-    Policies:
-      - VPCAccessPolicy: {}  # Permisos para crear/gestionar ENIs en VPC
 
 # ===============================================
 # Parameters (from Terraform outputs)
@@ -154,6 +151,14 @@ Resources:
               Resource:
                 - !Ref RDSPeruSecretArn
                 - !Ref RDSChileSecretArn
+            - Effect: Allow
+              Action:
+                - ec2:CreateNetworkInterface
+                - ec2:DescribeNetworkInterfaces
+                - ec2:DeleteNetworkInterface
+                - ec2:AssignPrivateIpAddresses
+                - ec2:UnassignPrivateIpAddresses
+              Resource: '*'
 
   # ===============================================
   # Lambda: Process Peru Appointments
@@ -189,6 +194,14 @@ Resources:
                 - sqs:DeleteMessage
                 - sqs:GetQueueAttributes
               Resource: !Ref SQSQueueArnPeru
+            - Effect: Allow
+              Action:
+                - ec2:CreateNetworkInterface
+                - ec2:DescribeNetworkInterfaces
+                - ec2:DeleteNetworkInterface
+                - ec2:AssignPrivateIpAddresses
+                - ec2:UnassignPrivateIpAddresses
+              Resource: '*'
 
   # ===============================================
   # Lambda: Process Chile Appointments
@@ -224,6 +237,14 @@ Resources:
                 - sqs:DeleteMessage
                 - sqs:GetQueueAttributes
               Resource: !Ref SQSQueueArnChile
+            - Effect: Allow
+              Action:
+                - ec2:CreateNetworkInterface
+                - ec2:DescribeNetworkInterfaces
+                - ec2:DeleteNetworkInterface
+                - ec2:AssignPrivateIpAddresses
+                - ec2:UnassignPrivateIpAddresses
+              Resource: '*'
 
   # ===============================================
   # Lambda: Complete Appointment
@@ -253,6 +274,14 @@ Resources:
                 - sqs:DeleteMessage
                 - sqs:GetQueueAttributes
               Resource: !Ref SQSCompletionQueueArn
+            - Effect: Allow
+              Action:
+                - ec2:CreateNetworkInterface
+                - ec2:DescribeNetworkInterfaces
+                - ec2:DeleteNetworkInterface
+                - ec2:AssignPrivateIpAddresses
+                - ec2:UnassignPrivateIpAddresses
+              Resource: '*'
 
   # ===============================================
   # API Gateway
