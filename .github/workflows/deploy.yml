@@ -1047,7 +1047,6 @@ jobs:
             
             echo ""
             echo "🔄 Iniciando eliminación del stack..."
-            
             # Intentar eliminar el stack
             if aws cloudformation delete-stack \
               --stack-name "$STACK_NAME" \
@@ -1137,6 +1136,7 @@ jobs:
           echo "📝 Lambda en VPC puede tardar 10-15 minutos en primera creación"
           echo ""
           
+          set +e  # No salir inmediatamente en error
           sam deploy \
             --stack-name agendamiento-citas-${{ steps.determine-env.outputs.environment }} \
             --resolve-s3 \
@@ -1161,13 +1161,25 @@ jobs:
             --capabilities CAPABILITY_IAM \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
-            --debug 2>&1 | tee sam-deploy.log || {
-              echo ""
-              echo "❌ SAM Deploy falló"
-              echo "📋 Últimas 50 líneas del log:"
-              tail -50 sam-deploy.log
-              exit 1
-            }
+            --disable-rollback \
+            --debug
+          
+          SAM_EXIT_CODE=$?
+          set -e  # Reactivar salir en error
+          
+          if [ $SAM_EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo "❌ SAM Deploy falló con código: $SAM_EXIT_CODE"
+            echo ""
+            echo "📋 Mostrando eventos de CloudFormation para debugging:"
+            aws cloudformation describe-stack-events \
+              --stack-name agendamiento-citas-${{ steps.determine-env.outputs.environment }} \
+              --max-items 30 \
+              --region ${{ env.AWS_REGION }} \
+              --query 'StackEvents[?ResourceStatus==`CREATE_FAILED` || contains(ResourceStatus, `ROLLBACK`)][].{Time:Timestamp,Resource:LogicalResourceId,Type:ResourceType,Status:ResourceStatus,Reason:ResourceStatusReason}' \
+              --output table 2>/dev/null || echo "No se pudieron obtener eventos"
+            exit 1
+          fi
           
           echo ""
           echo "✅ SAM Deploy completado exitosamente"
