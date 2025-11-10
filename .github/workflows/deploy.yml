@@ -532,19 +532,28 @@ jobs:
                   --output text 2>/dev/null || echo "None")
                 
                 if [ "$SUBNET_ID" != "None" ] && [ ! -z "$SUBNET_ID" ]; then
-                  # Buscar asociación existente
-                  ASSOC_ID=$(aws ec2 describe-route-tables \
+                  # Buscar asociación existente - obtener todas las route tables y buscar la asociación
+                  RT_JSON=$(aws ec2 describe-route-tables \
                     --region "$REGION" \
-                    --filters "Name=association.subnet-id,Values=$SUBNET_ID" \
-                    --query 'RouteTables[0].Associations[?SubnetId==`'$SUBNET_ID'`].RouteTableAssociationId' \
-                    --output text 2>/dev/null || echo "None")
+                    --filters "Name=vpc-id,Values=$EXISTING_VPC" \
+                    --output json 2>/dev/null || echo "{}")
                   
-                  if [ "$ASSOC_ID" != "None" ] && [ ! -z "$ASSOC_ID" ]; then
+                  # Extraer el RouteTableAssociationId usando jq
+                  ASSOC_ID=$(echo "$RT_JSON" | jq -r \
+                    ".RouteTables[] | .Associations[] | select(.SubnetId==\"$SUBNET_ID\" and .Main==false) | .RouteTableAssociationId" \
+                    2>/dev/null | head -n 1 || echo "None")
+                  
+                  if [ "$ASSOC_ID" != "None" ] && [ ! -z "$ASSOC_ID" ] && [ "$ASSOC_ID" != "null" ]; then
                     TERRAFORM_RESOURCE="aws_route_table_association.${SUBNET_TYPE}[${TERRAFORM_INDEX}]"
                     if ! terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
+                      echo "  🔄 Importando Route Table Association para subnet $SUBNET_ID..."
                       terraform import "$TERRAFORM_RESOURCE" "$ASSOC_ID" 2>&1 || \
                         echo "  ⚠️  No se pudo importar Route Table Association $SUBNET_TYPE[$TERRAFORM_INDEX]"
+                    else
+                      echo "  ✅ Route Table Association $SUBNET_TYPE[$TERRAFORM_INDEX] ya está en estado"
                     fi
+                  else
+                    echo "  ℹ️  No se encontró asociación para subnet $SUBNET_ID (puede ser main route table o no existe)"
                   fi
                 fi
               done
