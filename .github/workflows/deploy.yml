@@ -532,28 +532,42 @@ jobs:
                   --output text 2>/dev/null || echo "None")
                 
                 if [ "$SUBNET_ID" != "None" ] && [ ! -z "$SUBNET_ID" ]; then
-                  # Buscar asociación existente - obtener todas las route tables y buscar la asociación
-                  RT_JSON=$(aws ec2 describe-route-tables \
+                  # Buscar asociación existente - método más directo
+                  # Obtener todas las route tables y buscar la que tiene esta subnet asociada
+                  RT_LIST=$(aws ec2 describe-route-tables \
                     --region "$REGION" \
                     --filters "Name=vpc-id,Values=$EXISTING_VPC" \
-                    --output json 2>/dev/null || echo "{}")
+                    --query 'RouteTables[*].RouteTableId' \
+                    --output text 2>/dev/null || echo "")
                   
-                  # Extraer el RouteTableAssociationId usando jq
-                  ASSOC_ID=$(echo "$RT_JSON" | jq -r \
-                    ".RouteTables[] | .Associations[] | select(.SubnetId==\"$SUBNET_ID\" and .Main==false) | .RouteTableAssociationId" \
-                    2>/dev/null | head -n 1 || echo "None")
+                  ASSOC_ID="None"
+                  if [ ! -z "$RT_LIST" ]; then
+                    for RT_ID in $RT_LIST; do
+                      # Verificar si esta route table tiene la subnet asociada
+                      ASSOC_CHECK=$(aws ec2 describe-route-tables \
+                        --region "$REGION" \
+                        --route-table-ids "$RT_ID" \
+                        --query "RouteTables[0].Associations[?SubnetId=='$SUBNET_ID' && Main==\`false\`].RouteTableAssociationId" \
+                        --output text 2>/dev/null || echo "")
+                      
+                      if [ ! -z "$ASSOC_CHECK" ] && [ "$ASSOC_CHECK" != "None" ] && [ "$ASSOC_CHECK" != "null" ]; then
+                        ASSOC_ID="$ASSOC_CHECK"
+                        break
+                      fi
+                    done
+                  fi
                   
                   if [ "$ASSOC_ID" != "None" ] && [ ! -z "$ASSOC_ID" ] && [ "$ASSOC_ID" != "null" ]; then
                     TERRAFORM_RESOURCE="aws_route_table_association.${SUBNET_TYPE}[${TERRAFORM_INDEX}]"
                     if ! terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
-                      echo "  🔄 Importando Route Table Association para subnet $SUBNET_ID..."
+                      echo "  🔄 Importando Route Table Association $ASSOC_ID para subnet $SUBNET_ID..."
                       terraform import "$TERRAFORM_RESOURCE" "$ASSOC_ID" 2>&1 || \
                         echo "  ⚠️  No se pudo importar Route Table Association $SUBNET_TYPE[$TERRAFORM_INDEX]"
                     else
                       echo "  ✅ Route Table Association $SUBNET_TYPE[$TERRAFORM_INDEX] ya está en estado"
                     fi
                   else
-                    echo "  ℹ️  No se encontró asociación para subnet $SUBNET_ID (puede ser main route table o no existe)"
+                    echo "  ℹ️  No se encontró asociación para subnet $SUBNET_ID"
                   fi
                 fi
               done
@@ -573,6 +587,36 @@ jobs:
                 if ! terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
                   terraform import "$TERRAFORM_RESOURCE" "$EIP_ALLOC_ID" 2>&1 || \
                     echo "  ⚠️  No se pudo importar Elastic IP $EIP_INDEX"
+                fi
+              fi
+            done
+            
+            # NAT Gateways
+            for NAT_INDEX in "0" "1"; do
+              NAT_NAME="${PROJECT_NAME}-${ENV}-nat-$((NAT_INDEX + 1))"
+              NAT_ID=$(aws ec2 describe-nat-gateways \
+                --region "$REGION" \
+                --filter "Name=vpc-id,Values=$EXISTING_VPC" "Name=state,Values=available,pending" \
+                --query "NatGateways[${NAT_INDEX}].NatGatewayId" \
+                --output text 2>/dev/null || echo "None")
+              
+              # Si no se encontró por índice, buscar por tags
+              if [ "$NAT_ID" == "None" ] || [ -z "$NAT_ID" ]; then
+                NAT_ID=$(aws ec2 describe-nat-gateways \
+                  --region "$REGION" \
+                  --filter "Name=vpc-id,Values=$EXISTING_VPC" "Name=tag:Name,Values=$NAT_NAME" "Name=state,Values=available,pending" \
+                  --query 'NatGateways[0].NatGatewayId' \
+                  --output text 2>/dev/null || echo "None")
+              fi
+              
+              if [ "$NAT_ID" != "None" ] && [ ! -z "$NAT_ID" ]; then
+                TERRAFORM_RESOURCE="aws_nat_gateway.main[${NAT_INDEX}]"
+                if ! terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
+                  echo "  🔄 Importando NAT Gateway $NAT_ID..."
+                  terraform import "$TERRAFORM_RESOURCE" "$NAT_ID" 2>&1 || \
+                    echo "  ⚠️  No se pudo importar NAT Gateway $NAT_INDEX"
+                else
+                  echo "  ✅ NAT Gateway $NAT_INDEX ya está en estado"
                 fi
               fi
             done
