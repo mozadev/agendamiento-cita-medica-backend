@@ -374,6 +374,77 @@ jobs:
               terraform import aws_vpc.main "$EXISTING_VPC" 2>&1 || \
                 echo "⚠️  No se pudo importar (continuando...)"
             fi
+            
+            # Importar recursos relacionados de la VPC
+            echo "🔄 Importando recursos relacionados de la VPC..."
+            
+            # Internet Gateway
+            IGW_ID=$(aws ec2 describe-internet-gateways \
+              --region "$REGION" \
+              --filters "Name=attachment.vpc-id,Values=$EXISTING_VPC" \
+              --query 'InternetGateways[0].InternetGatewayId' \
+              --output text 2>/dev/null || echo "None")
+            if [ "$IGW_ID" != "None" ] && [ ! -z "$IGW_ID" ]; then
+              if ! terraform state show aws_internet_gateway.main >/dev/null 2>&1; then
+                terraform import aws_internet_gateway.main "$IGW_ID" 2>&1 || \
+                  echo "  ⚠️  No se pudo importar Internet Gateway"
+              fi
+            fi
+            
+            # Subnets (public, private, database) - importar por nombre
+            for SUBNET_TYPE in "public" "private" "database"; do
+              for AZ_INDEX in "1" "2"; do
+                if [ "$AZ_INDEX" == "1" ]; then
+                  AZ_SUFFIX="a"
+                  TERRAFORM_INDEX="0"
+                else
+                  AZ_SUFFIX="b"
+                  TERRAFORM_INDEX="1"
+                fi
+                
+                SUBNET_NAME_PATTERN="${PROJECT_NAME}-${ENV}-${SUBNET_TYPE}-subnet-${AZ_INDEX}"
+                SUBNET_ID=$(aws ec2 describe-subnets \
+                  --region "$REGION" \
+                  --filters "Name=vpc-id,Values=$EXISTING_VPC" "Name=tag:Name,Values=$SUBNET_NAME_PATTERN" \
+                  --query 'Subnets[0].SubnetId' \
+                  --output text 2>/dev/null || echo "None")
+                
+                if [ "$SUBNET_ID" != "None" ] && [ ! -z "$SUBNET_ID" ]; then
+                  TERRAFORM_RESOURCE="aws_subnet.${SUBNET_TYPE}[${TERRAFORM_INDEX}]"
+                  if ! terraform state show "$TERRAFORM_RESOURCE" >/dev/null 2>&1; then
+                    terraform import "$TERRAFORM_RESOURCE" "$SUBNET_ID" 2>&1 || \
+                      echo "  ⚠️  No se pudo importar subnet $SUBNET_ID"
+                  fi
+                fi
+              done
+            done
+            
+            # Security Groups
+            SG_LAMBDA=$(aws ec2 describe-security-groups \
+              --region "$REGION" \
+              --filters "Name=vpc-id,Values=$EXISTING_VPC" "Name=tag:Name,Values=${PROJECT_NAME}-${ENV}-lambda-sg" \
+              --query 'SecurityGroups[0].GroupId' \
+              --output text 2>/dev/null || echo "None")
+            if [ "$SG_LAMBDA" != "None" ] && [ ! -z "$SG_LAMBDA" ]; then
+              if ! terraform state show aws_security_group.lambda >/dev/null 2>&1; then
+                terraform import aws_security_group.lambda "$SG_LAMBDA" 2>&1 || \
+                  echo "  ⚠️  No se pudo importar Security Group Lambda"
+              fi
+            fi
+            
+            SG_RDS=$(aws ec2 describe-security-groups \
+              --region "$REGION" \
+              --filters "Name=vpc-id,Values=$EXISTING_VPC" "Name=tag:Name,Values=${PROJECT_NAME}-${ENV}-rds-sg" \
+              --query 'SecurityGroups[0].GroupId' \
+              --output text 2>/dev/null || echo "None")
+            if [ "$SG_RDS" != "None" ] && [ ! -z "$SG_RDS" ]; then
+              if ! terraform state show aws_security_group.rds >/dev/null 2>&1; then
+                terraform import aws_security_group.rds "$SG_RDS" 2>&1 || \
+                  echo "  ⚠️  No se pudo importar Security Group RDS"
+              fi
+            fi
+            
+            echo "✅ Recursos relacionados de VPC importados (o ya en estado)"
           else
             echo "✅ VPC no existe, Terraform la creará"
           fi
