@@ -296,12 +296,14 @@ Resources:
         AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
         AllowOrigin: "'*'"
       TracingEnabled: true
-      MethodSettings:
-        - ResourcePath: '/*'
-          HttpMethod: '*'
-          LoggingLevel: INFO
-          DataTraceEnabled: true
-          MetricsEnabled: true
+      # MethodSettings deshabilitado: requiere CloudWatch Logs role configurado en la cuenta
+      # Para habilitarlo, primero crear IAM role para API Gateway logs
+      # MethodSettings:
+      #   - ResourcePath: '/*'
+      #     HttpMethod: '*'
+      #     LoggingLevel: INFO
+      #     DataTraceEnabled: true
+      #     MetricsEnabled: true
 
 # ===============================================
 # Outputs
