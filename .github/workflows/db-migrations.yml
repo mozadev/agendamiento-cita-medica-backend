@@ -45,16 +45,24 @@ jobs:
         id: get-lambda
         run: |
           ENV="${{ github.event.inputs.environment }}"
-          FUNCTION_NAME="agendamiento-v2-${ENV}-db-migration"
+          # El nombre de la función en SAM es: ${Environment}-db-migration
+          FUNCTION_NAME="${ENV}-db-migration"
           echo "function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
-          echo "🔍 Lambda function: $FUNCTION_NAME"
+          echo "🔍 Buscando Lambda function: $FUNCTION_NAME"
           
           # Verificar que la función existe
           if aws lambda get-function --function-name "$FUNCTION_NAME" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-            echo "✅ Lambda function encontrada"
+            echo "✅ Lambda function encontrada: $FUNCTION_NAME"
           else
             echo "❌ Lambda function no encontrada: $FUNCTION_NAME"
-            echo "   Asegúrate de que el deploy de SAM se haya completado exitosamente"
+            echo ""
+            echo "🔍 Listando funciones Lambda disponibles..."
+            aws lambda list-functions \
+              --region ${{ env.AWS_REGION }} \
+              --query 'Functions[?contains(FunctionName, `db-migration`) || contains(FunctionName, `migration`)].FunctionName' \
+              --output table || echo "No se pudieron listar funciones"
+            echo ""
+            echo "💡 Asegúrate de que el deploy de SAM se haya completado exitosamente"
             exit 1
           fi
 
