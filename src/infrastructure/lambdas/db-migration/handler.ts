@@ -166,8 +166,8 @@ async function verifyConnection(
   dbname: string
 ): Promise<any> {
   try {
-    // Intentar query simple
-    const [rows] = await connection.query('SELECT 1 as test');
+    // Intentar query simple para verificar conexión
+    await connection.query('SELECT 1 as test');
     
     const tables = await verifyTables(connection);
     
