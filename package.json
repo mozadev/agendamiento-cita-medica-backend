@@ -7,7 +7,7 @@
     "test": "jest --coverage",
     "test:watch": "jest --watch",
     "test:unit": "jest --testPathPattern=tests/unit",
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/docs && cp docs/database-schema.sql dist/docs/",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
     "deploy": "serverless deploy",

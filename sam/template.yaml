@@ -284,6 +284,36 @@ Resources:
               Resource: '*'
 
   # ===============================================
+  # Lambda: Database Migration
+  # ===============================================
+  DatabaseMigrationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-db-migration'
+      CodeUri: ../dist/
+      Handler: infrastructure/lambdas/db-migration/handler.handler
+      Description: Execute database migrations for RDS instances
+      Timeout: 900  # 15 minutos para migraciones largas
+      MemorySize: 1024
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Ref RDSPeruSecretArn
+                - !Ref RDSChileSecretArn
+            - Effect: Allow
+              Action:
+                - ec2:CreateNetworkInterface
+                - ec2:DescribeNetworkInterfaces
+                - ec2:DeleteNetworkInterface
+                - ec2:AssignPrivateIpAddresses
+                - ec2:UnassignPrivateIpAddresses
+              Resource: '*'
+
+  # ===============================================
   # API Gateway
   # ===============================================
   AppointmentApi:
@@ -338,4 +368,10 @@ Outputs:
     Value: !GetAtt CompleteAppointmentFunction.Arn
     Export:
       Name: !Sub '${Environment}-CompleteFunctionArn'
+
+  DatabaseMigrationFunctionArn:
+    Description: Database Migration Function ARN
+    Value: !GetAtt DatabaseMigrationFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-DatabaseMigrationFunctionArn'
 

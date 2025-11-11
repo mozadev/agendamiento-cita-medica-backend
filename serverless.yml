@@ -1,0 +1,403 @@
+service: agendamiento-cita-medica
+frameworkVersion: '4'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 30
+  
+  environment:
+    STAGE: ${self:provider.stage}
+    APPOINTMENTS_TABLE: ${self:custom.appointmentsTable}
+    SNS_TOPIC_ARN: !Ref AppointmentsTopic
+    SQS_PE_URL: !Ref AppointmentQueuePE
+    SQS_CL_URL: !Ref AppointmentQueueCL
+    SQS_COMPLETION_URL: !Ref CompletionQueue
+    EVENTBRIDGE_BUS_NAME: ${self:custom.eventBridgeBusName}
+    # RDS credentials (these would be in Secrets Manager in production)
+    RDS_PE_HOST: ${env:RDS_PE_HOST, 'localhost'}
+    RDS_PE_DATABASE: ${env:RDS_PE_DATABASE, 'appointments_pe'}
+    RDS_PE_USER: ${env:RDS_PE_USER, 'admin'}
+    RDS_PE_PASSWORD: ${env:RDS_PE_PASSWORD, 'password'}
+    RDS_CL_HOST: ${env:RDS_CL_HOST, 'localhost'}
+    RDS_CL_DATABASE: ${env:RDS_CL_DATABASE, 'appointments_cl'}
+    RDS_CL_USER: ${env:RDS_CL_USER, 'admin'}
+    RDS_CL_PASSWORD: ${env:RDS_CL_PASSWORD, 'password'}
+
+  iam:
+    role:
+      statements:
+        # DynamoDB permissions
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:Query
+            - dynamodb:Scan
+          Resource:
+            - !GetAtt AppointmentsTable.Arn
+            - !Join ['/', [!GetAtt AppointmentsTable.Arn, 'index/*']]
+        
+        # SNS permissions
+        - Effect: Allow
+          Action:
+            - sns:Publish
+          Resource: !Ref AppointmentsTopic
+        
+        # SQS permissions
+        - Effect: Allow
+          Action:
+            - sqs:SendMessage
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+          Resource:
+            - !GetAtt AppointmentQueuePE.Arn
+            - !GetAtt AppointmentQueueCL.Arn
+            - !GetAtt CompletionQueue.Arn
+        
+        # EventBridge permissions
+        - Effect: Allow
+          Action:
+            - events:PutEvents
+          Resource: !GetAtt AppointmentEventBus.Arn
+
+custom:
+  appointmentsTable: appointments-${self:provider.stage}
+  eventBridgeBusName: appointments-bus-${self:provider.stage}
+  
+  esbuild:
+    bundle: true
+    minify: true
+    sourcemap: true
+    exclude:
+      - aws-sdk
+      - mysql2
+    target: node20
+    platform: node
+    concurrency: 10
+  
+  documentation:
+    version: '1.0.0'
+    title: 'Agendamiento Citas Médicas API'
+    description: 'API para agendamiento de citas médicas multi-país'
+    models: []
+
+plugins:
+  - serverless-esbuild
+  - serverless-offline
+
+functions:
+  # Lambda principal que recibe peticiones y lista agendamientos
+  appointment:
+    handler: src/infrastructure/lambdas/appointment/handler.createAppointment
+    events:
+      - http:
+          path: /appointments
+          method: post
+          cors: true
+          documentation:
+            summary: 'Crear nuevo agendamiento'
+            description: 'Registra una nueva solicitud de agendamiento de cita médica'
+            requestBody:
+              description: 'Datos del agendamiento'
+            requestModels:
+              application/json: 'CreateAppointmentRequest'
+    
+  listAppointments:
+    handler: src/infrastructure/lambdas/appointment/handler.listAppointments
+    events:
+      - http:
+          path: /appointments/{insuredId}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                insuredId: true
+          documentation:
+            summary: 'Listar agendamientos por asegurado'
+            description: 'Obtiene todos los agendamientos de un asegurado específico'
+  
+  # Lambda que actualiza estado a completed
+  completeAppointment:
+    handler: src/infrastructure/lambdas/appointment/handler.completeAppointment
+    events:
+      - sqs:
+          arn: !GetAtt CompletionQueue.Arn
+          batchSize: 10
+          maximumBatchingWindowInSeconds: 5
+
+  # Lambda para procesar agendamientos de Perú
+  appointmentPE:
+    handler: src/infrastructure/lambdas/appointment-country/handler.processAppointmentPE
+    events:
+      - sqs:
+          arn: !GetAtt AppointmentQueuePE.Arn
+          batchSize: 10
+          maximumBatchingWindowInSeconds: 5
+    environment:
+      COUNTRY_ISO: PE
+
+  # Lambda para procesar agendamientos de Chile
+  appointmentCL:
+    handler: src/infrastructure/lambdas/appointment-country/handler.processAppointmentCL
+    events:
+      - sqs:
+          arn: !GetAtt AppointmentQueueCL.Arn
+          batchSize: 10
+          maximumBatchingWindowInSeconds: 5
+    environment:
+      COUNTRY_ISO: CL
+
+resources:
+  Resources:
+    # DynamoDB Table
+    AppointmentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.appointmentsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: appointmentId
+            AttributeType: S
+          - AttributeName: insuredId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: appointmentId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: insuredId-createdAt-index
+            KeySchema:
+              - AttributeName: insuredId
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+          - Key: Application
+            Value: agendamiento-citas
+
+    # SNS Topic para distribuir mensajes por país
+    AppointmentsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: appointments-topic-${self:provider.stage}
+        DisplayName: Appointments Distribution Topic
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+
+    # Suscripción SNS -> SQS Perú (con filtro)
+    AppointmentsTopicSubscriptionPE:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        TopicArn: !Ref AppointmentsTopic
+        Endpoint: !GetAtt AppointmentQueuePE.Arn
+        FilterPolicy:
+          countryISO:
+            - PE
+        RawMessageDelivery: true
+
+    # Suscripción SNS -> SQS Chile (con filtro)
+    AppointmentsTopicSubscriptionCL:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        TopicArn: !Ref AppointmentsTopic
+        Endpoint: !GetAtt AppointmentQueueCL.Arn
+        FilterPolicy:
+          countryISO:
+            - CL
+        RawMessageDelivery: true
+
+    # SQS Queue para Perú
+    AppointmentQueuePE:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointment-queue-pe-${self:provider.stage}
+        VisibilityTimeout: 180
+        MessageRetentionPeriod: 1209600 # 14 days
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt AppointmentDLQPE.Arn
+          maxReceiveCount: 3
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+          - Key: Country
+            Value: PE
+
+    # Dead Letter Queue para Perú
+    AppointmentDLQPE:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointment-dlq-pe-${self:provider.stage}
+        MessageRetentionPeriod: 1209600
+
+    # SQS Queue para Chile
+    AppointmentQueueCL:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointment-queue-cl-${self:provider.stage}
+        VisibilityTimeout: 180
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt AppointmentDLQCL.Arn
+          maxReceiveCount: 3
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+          - Key: Country
+            Value: CL
+
+    # Dead Letter Queue para Chile
+    AppointmentDLQCL:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointment-dlq-cl-${self:provider.stage}
+        MessageRetentionPeriod: 1209600
+
+    # SQS Queue para completar agendamientos
+    CompletionQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointment-completion-queue-${self:provider.stage}
+        VisibilityTimeout: 180
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt CompletionDLQ.Arn
+          maxReceiveCount: 3
+
+    # Dead Letter Queue para completaciones
+    CompletionDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointment-completion-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600
+
+    # Políticas SQS para permitir SNS publish
+    AppointmentQueuePEPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref AppointmentQueuePE
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt AppointmentQueuePE.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref AppointmentsTopic
+
+    AppointmentQueueCLPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref AppointmentQueueCL
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt AppointmentQueueCL.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref AppointmentsTopic
+
+    # EventBridge Bus para eventos de completación
+    AppointmentEventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: ${self:custom.eventBridgeBusName}
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+
+    # EventBridge Rule: appointment.completed -> SQS
+    AppointmentCompletedRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: appointment-completed-rule-${self:provider.stage}
+        EventBusName: !Ref AppointmentEventBus
+        EventPattern:
+          source:
+            - appointment.service
+          detail-type:
+            - AppointmentCompleted
+        State: ENABLED
+        Targets:
+          - Arn: !GetAtt CompletionQueue.Arn
+            Id: CompletionQueueTarget
+
+    # Permisos EventBridge -> SQS
+    EventBridgeToSqsPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref CompletionQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt CompletionQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt AppointmentCompletedRule.Arn
+
+  Outputs:
+    AppointmentsTableName:
+      Value: !Ref AppointmentsTable
+      Export:
+        Name: ${self:provider.stage}-AppointmentsTable
+    
+    AppointmentsTopicArn:
+      Value: !Ref AppointmentsTopic
+      Export:
+        Name: ${self:provider.stage}-AppointmentsTopic
+    
+    AppointmentQueuePEUrl:
+      Value: !Ref AppointmentQueuePE
+      Export:
+        Name: ${self:provider.stage}-AppointmentQueuePE
+    
+    AppointmentQueueCLUrl:
+      Value: !Ref AppointmentQueueCL
+      Export:
+        Name: ${self:provider.stage}-AppointmentQueueCL
+    
+    EventBusName:
+      Value: !Ref AppointmentEventBus
+      Export:
+        Name: ${self:provider.stage}-AppointmentEventBus
+    
+    ApiEndpoint:
+      Value: !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}"
+      Export:
+        Name: ${self:provider.stage}-ApiEndpoint
+
