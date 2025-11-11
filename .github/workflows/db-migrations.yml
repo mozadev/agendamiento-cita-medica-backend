@@ -100,53 +100,85 @@ jobs:
           )
           
           echo "📤 Invocando función..."
-          RESPONSE=$(aws lambda invoke \
+          echo "📋 Payload:"
+          echo "$PAYLOAD" | jq '.' || echo "$PAYLOAD"
+          echo ""
+          
+          # Invocar Lambda y capturar tanto stdout como stderr
+          set +e  # No salir inmediatamente en error
+          aws lambda invoke \
             --function-name "$FUNCTION_NAME" \
             --payload "$PAYLOAD" \
             --region ${{ env.AWS_REGION }} \
             --cli-read-timeout 900 \
-            /tmp/lambda-response.json 2>&1)
+            /tmp/lambda-response.json > /tmp/lambda-invoke-output.json 2>&1
           
           EXIT_CODE=$?
+          set -e  # Reactivar salir en error
           
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "❌ Error invocando Lambda:"
-            echo "$RESPONSE"
-            exit 1
+          # Mostrar output de AWS CLI
+          if [ -f /tmp/lambda-invoke-output.json ]; then
+            echo "📋 AWS CLI Output:"
+            cat /tmp/lambda-invoke-output.json
+            echo ""
           fi
           
-          # Leer respuesta
+          # Leer respuesta (incluso si hubo error, puede contener información útil)
+          RESPONSE_BODY=""
           if [ -f /tmp/lambda-response.json ]; then
             RESPONSE_BODY=$(cat /tmp/lambda-response.json)
             echo "📥 Respuesta de Lambda:"
-            echo "$RESPONSE_BODY" | jq '.' || echo "$RESPONSE_BODY"
+            echo "$RESPONSE_BODY" | jq '.' 2>/dev/null || echo "$RESPONSE_BODY"
+            echo ""
             
-            # Verificar si hubo error
-            ERROR=$(echo "$RESPONSE_BODY" | jq -r '.errorMessage // empty' || echo "")
+            # Verificar si hubo error en la respuesta
+            ERROR=$(echo "$RESPONSE_BODY" | jq -r '.errorMessage // empty' 2>/dev/null || echo "")
+            ERROR_TYPE=$(echo "$RESPONSE_BODY" | jq -r '.errorType // empty' 2>/dev/null || echo "")
+            
             if [ ! -z "$ERROR" ]; then
-              echo "❌ Error en Lambda: $ERROR"
+              echo "❌ Error en Lambda:"
+              echo "   Tipo: $ERROR_TYPE"
+              echo "   Mensaje: $ERROR"
+              echo ""
               echo "📋 Stack trace:"
-              echo "$RESPONSE_BODY" | jq -r '.stackTrace // empty' || echo "No stack trace"
+              echo "$RESPONSE_BODY" | jq -r '.stackTrace // empty' 2>/dev/null || echo "No stack trace disponible"
               exit 1
             fi
-            
-            # Extraer resultados
-            PERU_RESULT=$(echo "$RESPONSE_BODY" | jq -r '.body | fromjson | .results.peru // empty' || echo "")
-            CHILE_RESULT=$(echo "$RESPONSE_BODY" | jq -r '.body | fromjson | .results.chile // empty' || echo "")
+          fi
+          
+          # Si el comando AWS CLI falló, mostrar error
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ Error invocando Lambda (exit code: $EXIT_CODE)"
+            if [ -f /tmp/lambda-invoke-output.json ]; then
+              echo "📋 Detalles del error:"
+              cat /tmp/lambda-invoke-output.json
+            fi
+            if [ -z "$RESPONSE_BODY" ]; then
+              echo "⚠️  No se recibió respuesta de Lambda"
+            fi
+            exit 1
+          fi
+          
+          # Extraer resultados (solo si no hubo error y hay respuesta)
+          if [ ! -z "$RESPONSE_BODY" ]; then
+            PERU_RESULT=$(echo "$RESPONSE_BODY" | jq -r '.body | fromjson | .results.peru // empty' 2>/dev/null || echo "")
+            CHILE_RESULT=$(echo "$RESPONSE_BODY" | jq -r '.body | fromjson | .results.chile // empty' 2>/dev/null || echo "")
             
             if [ ! -z "$PERU_RESULT" ]; then
               echo ""
               echo "📊 Resultado Perú:"
-              echo "$PERU_RESULT" | jq '.' || echo "$PERU_RESULT"
+              echo "$PERU_RESULT" | jq '.' 2>/dev/null || echo "$PERU_RESULT"
             fi
             
             if [ ! -z "$CHILE_RESULT" ]; then
               echo ""
               echo "📊 Resultado Chile:"
-              echo "$CHILE_RESULT" | jq '.' || echo "$CHILE_RESULT"
+              echo "$CHILE_RESULT" | jq '.' 2>/dev/null || echo "$CHILE_RESULT"
             fi
-          else
-            echo "⚠️  No se pudo leer la respuesta de Lambda"
+            
+            if [ -z "$PERU_RESULT" ] && [ -z "$CHILE_RESULT" ]; then
+              echo "⚠️  No se pudieron extraer resultados de la respuesta"
+            fi
           fi
           
           echo ""
