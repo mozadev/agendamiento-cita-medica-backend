@@ -171,6 +171,7 @@ export class Appointment {
    */
   public toPersistence(): Record<string, any> {
     return {
+      id: this.props.appointmentId, // DynamoDB partition key
       appointmentId: this.props.appointmentId,
       insuredId: this.props.insuredId.getValue(),
       scheduleId: this.props.scheduleId,

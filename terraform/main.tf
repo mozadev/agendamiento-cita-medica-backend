@@ -308,9 +308,15 @@ resource "aws_dynamodb_table" "appointments" {
     type = "S"
   }
 
+  attribute {
+    name = "createdAt"
+    type = "S"
+  }
+
   global_secondary_index {
-    name     = "insuredId-index"
-    hash_key = "insuredId"
+    name            = "insuredId-createdAt-index"
+    hash_key        = "insuredId"
+    range_key       = "createdAt"
     projection_type = "ALL"
   }
 

@@ -142,7 +142,7 @@ export class DynamoDBAppointmentRepository implements IAppointmentRepository {
    */
   private toDomain(item: Record<string, any>): Appointment {
     return Appointment.fromPersistence({
-      appointmentId: item.appointmentId,
+      appointmentId: item.appointmentId || item.id, // DynamoDB usa 'id' como partition key
       insuredId: InsuredId.create(item.insuredId),
       scheduleId: item.scheduleId,
       countryISO: CountryISO.create(item.countryISO),
