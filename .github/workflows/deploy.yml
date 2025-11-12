@@ -967,20 +967,37 @@ jobs:
             echo "environment=dev" >> $GITHUB_OUTPUT
           fi
 
+      - name: Prepare Lambda Package
+        run: |
+          echo "📦 Preparando paquete Lambda..."
+          echo "🔍 Verificando estructura del proyecto..."
+          
+          # Verificar que dist/ existe
+          if [ ! -d "dist" ]; then
+            echo "❌ Error: directorio dist/ no encontrado"
+            echo "   Ejecutando build..."
+            npm run build
+          else
+            echo "✅ directorio dist/ encontrado"
+          fi
+          
+          # Copiar node_modules a dist/ para que esté disponible en Lambda
+          echo "📂 Copiando node_modules a dist/..."
+          cp -r node_modules dist/
+          echo "✅ node_modules copiado a dist/"
+          
+          # Copiar package.json a dist/
+          echo "📂 Copiando package.json a dist/..."
+          cp package.json dist/
+          echo "✅ package.json copiado a dist/"
+          
+          echo "✅ Paquete Lambda preparado"
+
       - name: SAM Build
         working-directory: ./sam
         run: |
           echo "🔨 Ejecutando SAM Build..."
-          echo "📦 CodeUri apunta al root del proyecto (incluye node_modules)"
-          
-          # Verificar que node_modules existe en el root
-          if [ ! -d "../node_modules" ]; then
-            echo "❌ Error: node_modules no encontrado en el root del proyecto"
-            echo "   Ejecutando npm install..."
-            cd .. && npm install && cd sam
-          else
-            echo "✅ node_modules encontrado en root"
-          fi
+          echo "📦 CodeUri apunta a dist/ (código compilado + node_modules)"
           
           # Ejecutar sam build
           sam build
