@@ -30,7 +30,7 @@ export class DynamoDBAppointmentRepository implements IAppointmentRepository {
     this.dynamoDBClient = new DynamoDBClient({
       region: region || process.env.AWS_REGION || 'us-east-1'
     });
-    this.tableName = tableName || process.env.APPOINTMENTS_TABLE || 'appointments';
+    this.tableName = tableName || process.env.DYNAMODB_TABLE || 'appointments';
   }
 
   async save(appointment: Appointment): Promise<void> {
