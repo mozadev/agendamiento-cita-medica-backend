@@ -12,6 +12,7 @@ Globals:
     MemorySize: 512
     Architectures:
       - x86_64
+    CodeUri: ../  # Root del proyecto para incluir node_modules
     Environment:
       Variables:
         NODE_ENV: !Ref Environment
@@ -118,9 +119,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${Environment}-appointment-api'
-      CodeUri: ../dist/
-      Handler: infrastructure/lambdas/appointment/handler.createAppointment
-      Description: Create and list appointments
+      Handler: dist/infrastructure/lambdas/appointment/handler.handler
+      Description: Create and list appointments (unified handler)
       Events:
         CreateAppointment:
           Type: Api
@@ -167,8 +167,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${Environment}-process-appointment-peru'
-      CodeUri: ../dist/
-      Handler: infrastructure/lambdas/appointment-country/handler.processPeruAppointment
+      Handler: dist/infrastructure/lambdas/appointment-country/handler.processPeruAppointment
       Description: Process appointments for Peru (RDS MySQL)
       Events:
         SQSEvent:
@@ -210,8 +209,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${Environment}-process-appointment-chile'
-      CodeUri: ../dist/
-      Handler: infrastructure/lambdas/appointment-country/handler.processChileAppointment
+      Handler: dist/infrastructure/lambdas/appointment-country/handler.processChileAppointment
       Description: Process appointments for Chile (RDS MySQL)
       Events:
         SQSEvent:
@@ -253,8 +251,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${Environment}-complete-appointment'
-      CodeUri: ../dist/
-      Handler: infrastructure/lambdas/appointment/handler.completeAppointment
+      Handler: dist/infrastructure/lambdas/appointment/handler.completeAppointment
       Description: Mark appointments as completed in DynamoDB
       Events:
         SQSEvent:
@@ -290,8 +287,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${Environment}-db-migration'
-      CodeUri: ../dist/
-      Handler: infrastructure/lambdas/db-migration/handler.handler
+      Handler: dist/infrastructure/lambdas/db-migration/handler.handler
       Description: Execute database migrations for RDS instances
       Timeout: 900  # 15 minutos para migraciones largas
       MemorySize: 1024

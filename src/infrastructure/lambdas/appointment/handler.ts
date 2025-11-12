@@ -177,3 +177,42 @@ export const completeAppointment = async (event: SQSEvent): Promise<void> => {
   }
 };
 
+/**
+ * Handler unificado para API Gateway
+ * Enruta a createAppointment o listAppointments según el método HTTP
+ */
+export const handler = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  // API Gateway REST API v1 usa httpMethod y path directamente
+  const method = event.httpMethod || '';
+  const path = event.path || '';
+  
+  // Normalizar path: remover stage si existe (ej: /prod/appointments -> /appointments)
+  const normalizedPath = path.replace(/^\/[^/]+/, '') || path;
+
+  // POST /appointments -> createAppointment
+  if (method === 'POST' && (normalizedPath === '/appointments' || path.endsWith('/appointments'))) {
+    return createAppointment(event);
+  }
+
+  // GET /appointments/{insuredId} -> listAppointments
+  if (method === 'GET' && (normalizedPath.startsWith('/appointments/') || path.includes('/appointments/'))) {
+    return listAppointments(event);
+  }
+
+  // Método no soportado
+  return {
+    statusCode: 405,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    },
+    body: JSON.stringify({
+      error: 'Method not allowed',
+      method,
+      path: normalizedPath
+    })
+  };
+};
+
