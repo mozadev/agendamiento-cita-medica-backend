@@ -981,6 +981,15 @@ jobs:
             echo "✅ directorio dist/ encontrado"
           fi
           
+          # Instalar node_modules si no existe (este job es independiente del anterior)
+          if [ ! -d "node_modules" ]; then
+            echo "📦 Instalando dependencias..."
+            npm ci
+            echo "✅ Dependencias instaladas"
+          else
+            echo "✅ node_modules ya existe"
+          fi
+          
           # Copiar node_modules a dist/ para que esté disponible en Lambda
           echo "📂 Copiando node_modules a dist/..."
           cp -r node_modules dist/
