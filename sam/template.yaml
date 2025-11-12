@@ -121,6 +121,14 @@ Resources:
       FunctionName: !Sub '${Environment}-appointment-api'
       Handler: dist/infrastructure/lambdas/appointment/handler.handler
       Description: Create and list appointments (unified handler)
+      Metadata:
+        BuildMethod: esbuild
+        BuildProperties:
+          Minify: false
+          Target: es2020
+          Sourcemap: true
+          EntryPoints:
+            - dist/infrastructure/lambdas/appointment/handler.ts
       Events:
         CreateAppointment:
           Type: Api

@@ -969,7 +969,46 @@ jobs:
 
       - name: SAM Build
         working-directory: ./sam
-        run: sam build
+        run: |
+          echo "🔨 Ejecutando SAM Build..."
+          echo "📦 CodeUri apunta al root del proyecto (incluye node_modules)"
+          
+          # Verificar que node_modules existe en el root
+          if [ ! -d "../node_modules" ]; then
+            echo "❌ Error: node_modules no encontrado en el root del proyecto"
+            echo "   Ejecutando npm install..."
+            cd .. && npm install && cd sam
+          else
+            echo "✅ node_modules encontrado en root"
+          fi
+          
+          # Ejecutar sam build
+          sam build
+          
+          echo ""
+          echo "✅ SAM Build completado"
+          echo "📋 Verificando estructura del build..."
+          if [ -d ".aws-sam/build" ]; then
+            echo "📁 Directorio de build encontrado"
+            # Verificar que node_modules está presente en el build
+            NODE_MODULES_COUNT=$(find .aws-sam/build -name "node_modules" -type d | wc -l)
+            if [ "$NODE_MODULES_COUNT" -gt 0 ]; then
+              echo "✅ node_modules encontrado en build ($NODE_MODULES_COUNT ubicaciones)"
+            else
+              echo "⚠️  node_modules no encontrado en build - esto causará errores"
+              echo "   Listando estructura del build:"
+              find .aws-sam/build -maxdepth 3 -type d | head -10
+            fi
+            # Verificar que handler.js existe
+            HANDLER_COUNT=$(find .aws-sam/build -name "handler.js" -path "*/appointment/*" | wc -l)
+            if [ "$HANDLER_COUNT" -gt 0 ]; then
+              echo "✅ handler.js encontrado ($HANDLER_COUNT archivos)"
+            else
+              echo "⚠️  handler.js no encontrado"
+              echo "   Buscando archivos .js en build:"
+              find .aws-sam/build -name "*.js" -path "*/appointment/*" | head -5
+            fi
+          fi
 
       - name: Validate SAM Parameters
         run: |
