@@ -42,7 +42,7 @@ export class DynamoDBAppointmentRepository implements IAppointmentRepository {
         removeUndefinedValues: true,
         convertClassInstanceToMap: true
       }),
-      ConditionExpression: 'attribute_not_exists(appointmentId)'
+      ConditionExpression: 'attribute_not_exists(id)' // Partition key es 'id', no 'appointmentId'
     });
 
     try {
@@ -58,7 +58,7 @@ export class DynamoDBAppointmentRepository implements IAppointmentRepository {
   async findById(appointmentId: string): Promise<Appointment | null> {
     const command = new GetItemCommand({
       TableName: this.tableName,
-      Key: marshall({ appointmentId })
+      Key: marshall({ id: appointmentId }) // DynamoDB partition key es 'id'
     });
 
     const response = await this.dynamoDBClient.send(command);
@@ -96,7 +96,7 @@ export class DynamoDBAppointmentRepository implements IAppointmentRepository {
 
     const command = new UpdateItemCommand({
       TableName: this.tableName,
-      Key: marshall({ appointmentId: item.appointmentId }),
+      Key: marshall({ id: item.id }), // DynamoDB partition key es 'id'
       UpdateExpression: 'SET #status = :status, #updatedAt = :updatedAt, #completedAt = :completedAt, #metadata = :metadata',
       ExpressionAttributeNames: {
         '#status': 'status',
