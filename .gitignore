@@ -79,3 +79,17 @@ SECURITY.md
 SETUP.md
 TERRAFORM-IDEMPOTENCIA.md
 TERRAFORM-STATE-FIX.md
+
+# Scripts temporales y de debugging (mantener solo en local)
+cleanup-aws.sh
+cleanup-vpcs.sh
+delete-old-vpcs.sh
+force-delete-vpc.sh
+push-with-token.sh
+setup-git-commits.sh
+scripts/create-rds.sh
+scripts/init-database.sh
+terraform/setup-backend.sh
+
+# Configuración obsoleta (proyecto usa Terraform + SAM)
+serverless.yml
