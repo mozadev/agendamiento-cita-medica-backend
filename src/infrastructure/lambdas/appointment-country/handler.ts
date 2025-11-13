@@ -45,7 +45,7 @@ async function processCountryAppointments(
   country: CountryCode
 ): Promise<void> {
   // 1. Crear servicio específico del país (Strategy Pattern)
-  const countryService = MySQLCountryAppointmentService.createForCountry(country);
+  const countryService = await MySQLCountryAppointmentService.createForCountry(country);
 
   // 2. Crear caso de uso
   const useCase = new ProcessCountryAppointmentUseCase(

@@ -1,7 +1,10 @@
 import { createPool, Pool, PoolOptions } from 'mysql2/promise';
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { Appointment } from '../../domain/entities/Appointment';
 import { CountryISO, CountryCode } from '../../domain/value-objects/CountryISO';
 import { ICountryAppointmentService } from '../../domain/interfaces/ICountryAppointmentService';
+
+const secretsManager = new SecretsManagerClient({ region: process.env.AWS_REGION || 'us-east-1' });
 
 /**
  * Service: MySQLCountryAppointmentService
@@ -30,23 +33,37 @@ export class MySQLCountryAppointmentService implements ICountryAppointmentServic
 
   /**
    * Factory method para crear servicios por país
+   * Obtiene credenciales de Secrets Manager
    */
-  static createForCountry(countryCode: CountryCode): MySQLCountryAppointmentService {
+  static async createForCountry(countryCode: CountryCode): Promise<MySQLCountryAppointmentService> {
     const country = CountryISO.create(countryCode);
     
-    const config: PoolOptions = countryCode === CountryCode.PERU
-      ? {
-          host: process.env.RDS_PE_HOST || 'localhost',
-          database: process.env.RDS_PE_DATABASE || 'appointments_pe',
-          user: process.env.RDS_PE_USER || 'admin',
-          password: process.env.RDS_PE_PASSWORD || 'password'
-        }
-      : {
-          host: process.env.RDS_CL_HOST || 'localhost',
-          database: process.env.RDS_CL_DATABASE || 'appointments_cl',
-          user: process.env.RDS_CL_USER || 'admin',
-          password: process.env.RDS_CL_PASSWORD || 'password'
-        };
+    // Obtener ARN del secret según el país
+    const secretArn = countryCode === CountryCode.PERU
+      ? process.env.RDS_PERU_SECRET_ARN
+      : process.env.RDS_CHILE_SECRET_ARN;
+
+    if (!secretArn) {
+      throw new Error(`Secret ARN not configured for country: ${countryCode}`);
+    }
+
+    // Obtener credenciales de Secrets Manager
+    const command = new GetSecretValueCommand({ SecretId: secretArn });
+    const response = await secretsManager.send(command);
+    
+    if (!response.SecretString) {
+      throw new Error(`Secret ${secretArn} does not contain SecretString`);
+    }
+
+    const secret = JSON.parse(response.SecretString);
+    
+    const config: PoolOptions = {
+      host: secret.host,
+      database: secret.database || (countryCode === CountryCode.PERU ? 'appointments_pe' : 'appointments_cl'),
+      user: secret.username,
+      password: secret.password,
+      port: secret.port || 3306
+    };
 
     return new MySQLCountryAppointmentService(country, config);
   }
