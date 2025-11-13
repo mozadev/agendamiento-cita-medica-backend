@@ -167,7 +167,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${Environment}-process-appointment-peru'
-      Handler: infrastructure/lambdas/appointment-country/handler.processPeruAppointment
+      Handler: infrastructure/lambdas/appointment-country/handler.processAppointmentPE
       Description: Process appointments for Peru (RDS MySQL)
       Events:
         SQSEvent:
@@ -209,7 +209,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${Environment}-process-appointment-chile'
-      Handler: infrastructure/lambdas/appointment-country/handler.processChileAppointment
+      Handler: infrastructure/lambdas/appointment-country/handler.processAppointmentCL
       Description: Process appointments for Chile (RDS MySQL)
       Events:
         SQSEvent:
