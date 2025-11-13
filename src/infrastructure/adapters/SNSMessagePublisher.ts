@@ -13,21 +13,29 @@ import { CountryISO } from '../../domain/value-objects/CountryISO';
  */
 export class SNSMessagePublisher implements IMessagePublisher {
   private readonly snsClient: SNSClient;
-  private readonly topicArn: string;
+  private readonly topicArnPeru: string;
+  private readonly topicArnChile: string;
 
-  constructor(region?: string, topicArn?: string) {
+  constructor(region?: string, topicArnPeru?: string, topicArnChile?: string) {
     this.snsClient = new SNSClient({ region: region || process.env.AWS_REGION || 'us-east-1' });
-    this.topicArn = topicArn || process.env.SNS_TOPIC_ARN || '';
+    this.topicArnPeru = topicArnPeru || process.env.SNS_TOPIC_ARN_PERU || '';
+    this.topicArnChile = topicArnChile || process.env.SNS_TOPIC_ARN_CHILE || '';
   }
 
   async publish(
     message: Record<string, any>,
-    attributes?: MessageAttributes
+    attributes?: MessageAttributes,
+    topicArn?: string
   ): Promise<string> {
     const messageAttributes = this.convertToSNSAttributes(attributes || {});
+    const targetTopicArn = topicArn || this.topicArnPeru; // Default a Peru
+
+    if (!targetTopicArn) {
+      throw new Error('SNS Topic ARN not configured');
+    }
 
     const command = new PublishCommand({
-      TopicArn: this.topicArn,
+      TopicArn: targetTopicArn,
       Message: JSON.stringify(message),
       MessageAttributes: messageAttributes
     });
@@ -40,13 +48,19 @@ export class SNSMessagePublisher implements IMessagePublisher {
     message: Record<string, any>,
     countryISO: CountryISO
   ): Promise<string> {
-    // SNS Filter Policy: El filtro se aplica en las suscripciones
-    // Agregamos el atributo countryISO para el filtrado
+    // Seleccionar el tópico SNS según el país
+    const topicArn = countryISO.getValue() === 'PE' ? this.topicArnPeru : this.topicArnChile;
+
+    if (!topicArn) {
+      throw new Error(`SNS Topic ARN not configured for country: ${countryISO.getValue()}`);
+    }
+
+    // Agregamos el atributo countryISO para el filtrado (aunque ahora es redundante)
     const attributes: MessageAttributes = {
       countryISO: countryISO.getValue()
     };
 
-    return this.publish(message, attributes);
+    return this.publish(message, attributes, topicArn);
   }
 
   private convertToSNSAttributes(
