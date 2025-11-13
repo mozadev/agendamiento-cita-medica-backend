@@ -60,3 +60,22 @@ docs/generated/
 *.pdf
 *.docx
 
+
+# Archivos de documentación temporal/debugging (mantener solo en local)
+API-ENDPOINTS.md
+AWS-CLI-SETUP.md
+COMMITS-GUIDE.md
+COMMITS-STRATEGY.md
+CREATE-IAM-USER.md
+DEPLOYMENT-FLOW.md
+DEPLOYMENT.md
+GIT-PUSH-FIX.md
+GITHUB-SECRETS-SETUP.md
+IAC-GUIDE.md
+MIGRATION-GUIDE.md
+QUICK-DEPLOY.md
+RESUMEN-IAC.md
+SECURITY.md
+SETUP.md
+TERRAFORM-IDEMPOTENCIA.md
+TERRAFORM-STATE-FIX.md

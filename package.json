@@ -26,7 +26,7 @@
     "appointments",
     "healthcare"
   ],
-  "author": "Fabrizio Moza",
+  "author": "Cesar Moza",
   "license": "MIT",
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.654.0",
