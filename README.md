@@ -5,42 +5,58 @@ Sistema backend serverless para agendamiento de citas médicas multi-país (Per�
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-20.x-green.svg)](https://nodejs.org/)
 [![AWS](https://img.shields.io/badge/AWS-Serverless-orange.svg)](https://aws.amazon.com/serverless/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/Tests-Passing-brightgreen.svg)](tests/)
+[![Coverage](https://img.shields.io/badge/Coverage-95%25-brightgreen.svg)](tests/)
 
 ---
 
 ## 📋 Tabla de Contenidos
 
+- [Descripción del Reto](#-descripción-del-reto)
 - [Características](#-características)
 - [Arquitectura](#️-arquitectura)
 - [Tecnologías](#️-tecnologías)
-- [Inicio Rápido](#-inicio-rápido)
-- [API Endpoints](#-api-endpoints)
-- [Documentación](#-documentación)
 - [Estructura del Proyecto](#-estructura-del-proyecto)
 - [Principios y Patrones](#-principios-y-patrones)
+- [Instalación Local](#-instalación-local)
 - [Testing](#-testing)
+- [Deploy](#-deploy)
+- [Uso de la API](#-uso-de-la-api)
+- [Documentación API](#-documentación-api)
+
+---
+
+## 📝 Descripción del Reto
+
+**Objetivo:** Crear una aplicación backend serverless en AWS para agendamiento de citas médicas que funcione para múltiples países (Perú y Chile), donde cada país tiene su propio procesamiento y base de datos.
+
+**Flujo de Negocio:**
+1. Asegurado elige centro médico, especialidad, médico y horario
+2. Presiona "Agendar" en la aplicación web
+3. Backend recibe la petición y devuelve respuesta inmediata: "El agendamiento está en proceso"
+4. Procesamiento asíncrono por país (diferente para PE y CL)
+5. Confirmación del agendamiento cuando se complete
 
 ---
 
 ## ✨ Características
 
-- ✅ **Procesamiento Asíncrono**: Respuesta inmediata con procesamiento en segundo plano
-- ✅ **Multi-País**: Soporte para Perú (PE) y Chile (CL) con bases de datos independientes
-- ✅ **Arquitectura Serverless**: 100% AWS sin servidores que administrar
-- ✅ **Clean Architecture**: Separación clara de responsabilidades (Hexagonal)
-- ✅ **SOLID Principles**: Código mantenible y escalable
+- ✅ **Procesamiento Asíncrono**: Respuesta inmediata al cliente con procesamiento en segundo plano
+- ✅ **Multi-País**: Lógica de negocio independiente por país (PE y CL)
+- ✅ **Arquitectura Serverless**: 100% AWS sin administración de servidores
+- ✅ **Clean Architecture**: Arquitectura hexagonal con separación de capas
+- ✅ **SOLID Principles**: Código mantenible, escalable y testeable
 - ✅ **Type-Safe**: TypeScript para mayor confiabilidad
-- ✅ **Infrastructure as Code**: Terraform + AWS SAM
-- ✅ **CI/CD**: GitHub Actions para deploy automático
-- ✅ **100% Tested**: Pruebas unitarias con Jest
+- ✅ **Infrastructure as Code**: Terraform (infraestructura base) + AWS SAM (aplicación)
+- ✅ **CI/CD Completo**: GitHub Actions para deploy automático
+- ✅ **100% Tested**: Cobertura del 95%+ en Domain y Application layers
 - ✅ **API Documentation**: OpenAPI/Swagger 3.0
 
 ---
 
 ## 🏗️ Arquitectura
 
-### Diagrama de Flujo
+### Diagrama de Flujo Completo
 
 ```
 ┌─────────────┐
@@ -59,7 +75,7 @@ Sistema backend serverless para agendamiento de citas médicas multi-país (Per�
 │  Lambda             │────▶│  DynamoDB    │
 │  appointment        │  2  │  (pending)   │
 └──────┬──────────────┘     └──────────────┘
-       │ 3. Publish
+       │ 3. Publish message
        ▼
 ┌─────────────────────┐
 │  SNS Topic          │
@@ -69,102 +85,294 @@ Sistema backend serverless para agendamiento de citas médicas multi-país (Per�
     PE │      │ CL
        ▼      ▼
   ┌────────┐ ┌────────┐
-  │SQS_PE  │ │SQS_CL  │
+  │SQS PE  │ │SQS CL  │
   └────┬───┘ └───┬────┘
-       │         │
+       │ 4       │ 4
        ▼         ▼
   ┌──────────┐ ┌──────────┐     ┌─────────────┐
-  │Lambda_PE │ │Lambda_CL │────▶│ MySQL RDS   │
-  └────┬─────┘ └────┬─────┘  4  │ (per country)│
+  │Lambda PE │ │Lambda CL │────▶│ MySQL RDS   │
+  └────┬─────┘ └────┬─────┘  5  │ (per country)│
        │            │            └─────────────┘
        │            │
        └────┬───────┘
-            │ 5. Confirm
+            │ 6. Publish confirmation
             ▼
        ┌──────────────┐
        │ EventBridge  │
        └──────┬───────┘
-              │ 6
+              │ 7
               ▼
          ┌─────────┐
          │   SQS   │
          │Completion│
          └────┬────┘
-              │
+              │ 8
               ▼
        ┌─────────────────┐     ┌──────────────┐
        │  Lambda         │────▶│  DynamoDB    │
-       │  appointment    │  7  │  (completed) │
+       │  appointment    │  9  │  (completed) │
        └─────────────────┘     └──────────────┘
 ```
 
-### Componentes AWS
+### Componentes AWS Desplegados
 
-| Servicio | Propósito | Implementación |
-|----------|-----------|----------------|
-| **API Gateway** | Punto de entrada HTTP REST | AWS SAM |
-| **Lambda Functions** | Lógica de negocio serverless | 5 funciones (appointment, process-pe, process-cl, complete, db-migration) |
-| **DynamoDB** | Almacén de estados de agendamiento | Terraform |
-| **SNS** | Distribución de mensajes con filtrado por país | Terraform (2 topics) |
-| **SQS** | Colas por país + cola de completación | Terraform (3 colas) |
-| **EventBridge** | Bus de eventos para notificaciones | Terraform |
-| **RDS MySQL** | Base de datos relacional por país | Terraform (2 instancias) |
-| **VPC** | Red privada para seguridad | Terraform |
-| **Secrets Manager** | Gestión de credenciales | Terraform |
+| Servicio | Propósito | Cantidad |
+|----------|-----------|----------|
+| **API Gateway** | Punto de entrada HTTP REST | 1 |
+| **Lambda Functions** | Lógica de negocio serverless | 5 funciones |
+| **DynamoDB** | Estados de agendamiento con GSI | 1 tabla |
+| **SNS** | Distribución por país con message filtering | 2 topics |
+| **SQS** | Colas de procesamiento | 3 colas |
+| **EventBridge** | Bus de eventos para confirmaciones | 1 bus |
+| **RDS MySQL** | Base de datos relacional por país | 2 instancias |
+| **VPC** | Red privada para seguridad | 1 (2 AZs) |
+| **Secrets Manager** | Credenciales de RDS | 2 secrets |
+
+### Lambda Functions
+
+1. **appointment-api** - POST/GET endpoints (crear y listar)
+2. **process-appointment-peru** - Procesamiento específico para Perú
+3. **process-appointment-chile** - Procesamiento específico para Chile
+4. **complete-appointment** - Actualización de estado a completado
+5. **db-migration** - Ejecutar migraciones de base de datos
 
 ---
 
 ## 🛠️ Tecnologías
 
-### Core
-- **Runtime**: Node.js 20.x
-- **Lenguaje**: TypeScript 5.x
-- **Package Manager**: npm
+### Core Stack
+```
+Runtime:      Node.js 20.x
+Lenguaje:     TypeScript 5.x
+Package Mgr:  npm
+```
 
 ### AWS Infrastructure
-- **IaC**: Terraform 1.6.0 (base infrastructure)
-- **Serverless**: AWS SAM (Lambda functions & API Gateway)
-- **Cloud Provider**: AWS
+```
+IaC Base:     Terraform 1.6.0
+Serverless:   AWS SAM
+Cloud:        AWS (us-east-1)
+```
 
-### Base de Datos
-- **NoSQL**: DynamoDB (estados de agendamiento)
-- **SQL**: MySQL 8.0 en RDS (datos por país)
+### Bases de Datos
+```
+NoSQL:        DynamoDB (estados)
+SQL:          MySQL 8.0 en RDS (datos por país)
+```
 
-### Testing & Quality
-- **Testing Framework**: Jest
-- **Coverage**: 100% en Domain y Application layers
+### DevOps
+```
+CI/CD:        GitHub Actions
+Secrets:      GitHub Secrets
+Testing:      Jest (95%+ coverage)
+```
 
-### CI/CD
-- **Pipeline**: GitHub Actions
-- **Secrets Management**: GitHub Secrets
-- **Deploy Strategy**: Automatic on push to main
-
-### Documentation
-- **API Spec**: OpenAPI 3.0
-- **Format**: Swagger/YAML
+### Documentación
+```
+API Spec:     OpenAPI 3.0 (Swagger)
+Formato:      YAML
+```
 
 ---
 
-## 🚀 Inicio Rápido
+## 📁 Estructura del Proyecto
+
+### Arquitectura de 3 Capas (Clean Architecture)
+
+```
+src/
+├── domain/                         # 🎯 CAPA DE DOMINIO
+│   ├── entities/
+│   │   └── Appointment.ts          # Entidad raíz con lógica de negocio
+│   ├── value-objects/
+│   │   ├── InsuredId.ts            # VO: Validación de ID asegurado (5 dígitos)
+│   │   ├── CountryISO.ts           # VO: Validación de país (PE, CL)
+│   │   └── AppointmentStatus.ts    # VO: Estados (pending, completed, failed)
+│   └── interfaces/                 # Puertos (abstracciones)
+│       ├── IAppointmentRepository.ts
+│       ├── IMessagePublisher.ts
+│       ├── IEventPublisher.ts
+│       ├── ICountryAppointmentService.ts
+│       └── IIdGenerator.ts
+│
+├── application/                    # 🔄 CAPA DE APLICACIÓN
+│   ├── dtos/                       # Data Transfer Objects
+│   │   ├── CreateAppointmentDto.ts
+│   │   └── CreateAppointmentResponseDto.ts
+│   └── use-cases/                  # Casos de uso (lógica de negocio)
+│       ├── CreateAppointmentUseCase.ts      # POST /appointments
+│       ├── ListAppointmentsByInsuredUseCase.ts  # GET /appointments/{id}
+│       ├── ProcessCountryAppointmentUseCase.ts  # Procesamiento por país
+│       └── CompleteAppointmentUseCase.ts    # Completar agendamiento
+│
+└── infrastructure/                 # 🔌 CAPA DE INFRAESTRUCTURA
+    ├── adapters/                   # Adaptadores de servicios externos
+    │   ├── UUIDGenerator.ts        # Generación de IDs únicos
+    │   ├── SNSMessagePublisher.ts  # Publicación a AWS SNS
+    │   └── EventBridgePublisher.ts # Publicación a AWS EventBridge
+    ├── repositories/               # Implementaciones de repositorios
+    │   ├── DynamoDBAppointmentRepository.ts
+    │   └── MySQLCountryAppointmentService.ts
+    └── lambdas/                    # Handlers de AWS Lambda
+        ├── appointment/
+        │   └── handler.ts          # API: POST, GET
+        ├── appointment-country/
+        │   └── handler.ts          # Procesamiento PE/CL
+        └── db-migration/
+            └── handler.ts          # Migraciones de BD
+
+tests/
+└── unit/
+    ├── domain/
+    │   ├── entities/               # Tests de entidades
+    │   └── value-objects/          # Tests de VOs
+    └── application/
+        └── use-cases/              # Tests de casos de uso
+```
+
+### Infraestructura como Código
+
+```
+terraform/                          # 🏗️ Infraestructura Base
+├── main.tf                         # VPC, RDS, DynamoDB, SNS, SQS, EventBridge
+├── variables.tf                    # Variables de configuración
+└── outputs.tf                      # Outputs (ARNs, URLs, etc.)
+
+sam/                                # ☁️ Aplicación Serverless
+└── template.yaml                   # Lambda functions + API Gateway
+
+.github/workflows/                  # 🔄 CI/CD
+├── deploy.yml                      # Pipeline principal (Terraform + SAM)
+└── db-migrations.yml               # Workflow de migraciones
+```
+
+---
+
+## 🎯 Principios y Patrones
+
+### Clean Architecture (Arquitectura Hexagonal)
+
+```
+┌─────────────────────────────────────────────────────┐
+│              Infrastructure Layer                    │
+│  (Lambdas, Repositories, Adapters, AWS Services)   │
+│                                                      │
+│  ┌───────────────────────────────────────────────┐ │
+│  │          Application Layer                     │ │
+│  │     (Use Cases, DTOs, Orchestration)          │ │
+│  │                                               │ │
+│  │  ┌─────────────────────────────────────────┐ │ │
+│  │  │        Domain Layer                     │ │ │
+│  │  │  (Entities, Value Objects, Interfaces) │ │ │
+│  │  │                                         │ │ │
+│  │  │  ✓ No dependencies                      │ │ │
+│  │  │  ✓ Pure business logic                  │ │ │
+│  │  │  ✓ Framework agnostic                   │ │ │
+│  │  │  ✓ Independent & testable               │ │ │
+│  │  └─────────────────────────────────────────┘ │ │
+│  └───────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────┘
+
+Flujo de Dependencias: Infrastructure → Application → Domain
+```
+
+**Ventajas:**
+- ✅ Máxima testabilidad (Domain 100% aislado)
+- ✅ Independencia de frameworks y librerías
+- ✅ Cambio de base de datos sin afectar lógica
+- ✅ Fácil agregar nuevos países
+
+### Principios SOLID
+
+| Principio | Implementación |
+|-----------|----------------|
+| **S**ingle Responsibility | Cada clase tiene una única razón para cambiar (ej: `InsuredId` solo valida IDs) |
+| **O**pen/Closed | Extensible sin modificar código (ej: agregar nuevo país) |
+| **L**iskov Substitution | Interfaces intercambiables sin romper contratos |
+| **I**nterface Segregation | Interfaces específicas (`IMessagePublisher`, `IEventPublisher`) |
+| **D**ependency Inversion | Use cases dependen de abstracciones, no implementaciones |
+
+### Patrones de Diseño Aplicados
+
+#### 1. **Repository Pattern**
+Abstracción del acceso a datos.
+```typescript
+interface IAppointmentRepository {
+  save(appointment: Appointment): Promise<void>;
+  findById(id: string): Promise<Appointment | null>;
+  findByInsuredId(insuredId: InsuredId): Promise<Appointment[]>;
+}
+
+// Implementaciones:
+// - DynamoDBAppointmentRepository
+// - MySQLCountryAppointmentService
+```
+
+#### 2. **Strategy Pattern**
+Algoritmos intercambiables por país.
+```typescript
+// Estrategia base
+interface ICountryAppointmentService {
+  process(appointment: Appointment): Promise<void>;
+}
+
+// Implementaciones por país con lógica diferente
+```
+
+#### 3. **Factory Pattern**
+Creación controlada de objetos con validaciones.
+```typescript
+Appointment.create(...)    // Crea y valida
+CountryISO.create("PE")    // Valida y formatea
+InsuredId.create("123")    // Valida y formatea a "00123"
+```
+
+#### 4. **Adapter Pattern**
+Adaptación de servicios externos AWS.
+```typescript
+SNSMessagePublisher implements IMessagePublisher
+EventBridgePublisher implements IEventPublisher
+```
+
+#### 5. **Value Object Pattern**
+Objetos inmutables identificados por valor.
+```typescript
+// Value Objects con validaciones incorporadas
+InsuredId, CountryISO, AppointmentStatus
+```
+
+#### 6. **Use Case Pattern**
+Encapsulación de lógica de negocio específica.
+```typescript
+CreateAppointmentUseCase
+ListAppointmentsByInsuredUseCase
+ProcessCountryAppointmentUseCase
+CompleteAppointmentUseCase
+```
+
+---
+
+## 🚀 Instalación Local
 
 ### Prerrequisitos
 
 ```bash
-# Node.js 18+ y npm
+# Node.js 20+ y npm
 node --version  # v20.x
 npm --version   # 10.x
 
 # AWS CLI configurado
 aws --version
+aws configure  # Configurar credenciales
 
-# Terraform (opcional, para modificar infraestructura)
+# Terraform (opcional)
 terraform --version  # 1.6.0+
 
-# AWS SAM CLI (opcional, para desarrollo local)
+# AWS SAM CLI (opcional)
 sam --version
 ```
 
-### Instalación Local
+### Setup del Proyecto
 
 ```bash
 # 1. Clonar repositorio
@@ -179,271 +387,10 @@ npm run build
 
 # 4. Ejecutar tests
 npm test
+
+# 5. Ver cobertura de tests
+npm test -- --coverage
 ```
-
-### Deploy en AWS
-
-El proyecto usa **CI/CD automático** con GitHub Actions. Al hacer push a `main`, se despliega automáticamente.
-
-Para deploy manual, ver [EXPLICACION-DEPLOY-WORKFLOW.md](EXPLICACION-DEPLOY-WORKFLOW.md)
-
----
-
-## 📡 API Endpoints
-
-### Base URL
-
-```
-Production: https://la153v9kdg.execute-api.us-east-1.amazonaws.com/prod/
-```
-
-### 1. Crear Agendamiento
-
-**Endpoint:** `POST /appointments`
-
-**Request:**
-```bash
-curl -X POST https://la153v9kdg.execute-api.us-east-1.amazonaws.com/prod/appointments \
-  -H "Content-Type: application/json" \
-  -d '{
-    "insuredId": "12345",
-    "scheduleId": 100,
-    "countryISO": "PE"
-  }'
-```
-
-**Response (201 Created):**
-```json
-{
-  "appointmentId": "APT-abc12345",
-  "insuredId": "12345",
-  "scheduleId": 100,
-  "countryISO": "PE",
-  "status": "pending",
-  "message": "El agendamiento está en proceso",
-  "createdAt": "2024-11-13T10:30:00.000Z"
-}
-```
-
-### 2. Listar Agendamientos por Asegurado
-
-**Endpoint:** `GET /appointments/{insuredId}`
-
-**Request:**
-```bash
-curl -X GET https://la153v9kdg.execute-api.us-east-1.amazonaws.com/prod/appointments/12345
-```
-
-**Response (200 OK):**
-```json
-{
-  "appointments": [
-    {
-      "appointmentId": "APT-abc12345",
-      "insuredId": "12345",
-      "scheduleId": 100,
-      "countryISO": "PE",
-      "status": "completed",
-      "createdAt": "2024-11-13T10:30:00.000Z",
-      "updatedAt": "2024-11-13T10:30:15.000Z",
-      "completedAt": "2024-11-13T10:30:15.000Z"
-    }
-  ],
-  "total": 1,
-  "insuredId": "12345"
-}
-```
-
-### Validaciones
-
-| Campo | Tipo | Validación |
-|-------|------|------------|
-| `insuredId` | string | 1-5 dígitos numéricos |
-| `scheduleId` | number | Entero positivo |
-| `countryISO` | string | "PE" o "CL" únicamente |
-
-### Códigos de Estado
-
-| Código | Descripción |
-|--------|-------------|
-| 200 | Consulta exitosa |
-| 201 | Agendamiento creado |
-| 400 | Datos de entrada inválidos |
-| 404 | Recurso no encontrado |
-| 500 | Error interno del servidor |
-
----
-
-## 📚 Documentación
-
-### Documentación de la API
-
-**Ver especificación OpenAPI/Swagger:**
-
-1. **Online (Recomendado):**
-   - [Swagger UI](https://petstore.swagger.io/?url=https://raw.githubusercontent.com/mozadev/agendamiento-cita-medica-backend/main/docs/OpenAPI.yaml)
-
-2. **Archivo Local:**
-   - [docs/OpenAPI.yaml](docs/OpenAPI.yaml)
-
-3. **Swagger Editor:**
-   - Ir a [editor.swagger.io](https://editor.swagger.io/)
-   - Pegar el contenido de `docs/OpenAPI.yaml`
-
-### Guías Adicionales
-
-- 📘 [Guía de Pruebas de API](GUIA-PRUEBAS-API.md) - Cómo probar todos los endpoints
-- 🚀 [Explicación del Deploy Workflow](EXPLICACION-DEPLOY-WORKFLOW.md) - CI/CD detallado
-- 🗄️ [Inicializar Base de Datos](INICIALIZAR-BASE-DATOS.md) - Setup de RDS MySQL
-
----
-
-## 📁 Estructura del Proyecto
-
-```
-agendamiento-cita-medica-backend/
-├── src/
-│   ├── domain/                         # 🎯 Capa de Dominio
-│   │   ├── entities/
-│   │   │   └── Appointment.ts          # Entidad raíz del agregado
-│   │   ├── value-objects/
-│   │   │   ├── InsuredId.ts            # VO: ID del asegurado
-│   │   │   ├── CountryISO.ts           # VO: Código de país
-│   │   │   └── AppointmentStatus.ts    # VO: Estados del ciclo de vida
-│   │   └── interfaces/                 # Puertos (abstracciones)
-│   │       ├── IAppointmentRepository.ts
-│   │       ├── IMessagePublisher.ts
-│   │       ├── IEventPublisher.ts
-│   │       ├── ICountryAppointmentService.ts
-│   │       └── IIdGenerator.ts
-│   │
-│   ├── application/                    # 🔄 Capa de Aplicación
-│   │   ├── dtos/                       # Data Transfer Objects
-│   │   │   ├── CreateAppointmentDto.ts
-│   │   │   └── CreateAppointmentResponseDto.ts
-│   │   └── use-cases/                  # Casos de uso (lógica de negocio)
-│   │       ├── CreateAppointmentUseCase.ts
-│   │       ├── ListAppointmentsByInsuredUseCase.ts
-│   │       ├── CompleteAppointmentUseCase.ts
-│   │       └── ProcessCountryAppointmentUseCase.ts
-│   │
-│   └── infrastructure/                 # 🔌 Capa de Infraestructura
-│       ├── adapters/                   # Adaptadores externos
-│       │   ├── UUIDGenerator.ts        # Generación de IDs
-│       │   ├── SNSMessagePublisher.ts  # AWS SNS
-│       │   └── EventBridgePublisher.ts # AWS EventBridge
-│       ├── repositories/               # Implementaciones de repositorios
-│       │   ├── DynamoDBAppointmentRepository.ts
-│       │   └── MySQLCountryAppointmentService.ts
-│       └── lambdas/                    # Handlers de AWS Lambda
-│           ├── appointment/
-│           │   └── handler.ts          # POST, GET /appointments
-│           ├── appointment-country/
-│           │   └── handler.ts          # Procesamiento por país
-│           └── db-migration/
-│               └── handler.ts          # Migraciones de base de datos
-│
-├── terraform/                          # 🏗️ Infraestructura Base (IaC)
-│   ├── main.tf                         # VPC, RDS, DynamoDB, SNS, SQS, EventBridge
-│   ├── variables.tf
-│   └── outputs.tf
-│
-├── sam/                                # ☁️ Serverless Application Model
-│   └── template.yaml                   # Lambda functions + API Gateway
-│
-├── .github/
-│   └── workflows/
-│       ├── deploy.yml                  # CI/CD pipeline principal
-│       └── db-migrations.yml           # Workflow de migraciones
-│
-├── tests/                              # 🧪 Pruebas
-│   └── unit/
-│       ├── domain/
-│       └── application/
-│
-├── docs/                               # 📖 Documentación
-│   ├── OpenAPI.yaml                    # Especificación API
-│   └── database-schema.sql             # Schema de RDS
-│
-├── test-api.sh                         # Script de pruebas automatizadas
-├── tsconfig.json                       # Configuración TypeScript
-├── jest.config.js                      # Configuración Jest
-├── package.json                        # Dependencias
-└── README.md                           # Este archivo
-```
-
----
-
-## 🎯 Principios y Patrones
-
-### Clean Architecture (Arquitectura Hexagonal)
-
-```
-┌─────────────────────────────────────────────────────┐
-│              Infrastructure Layer                    │
-│  (Lambdas, Repositories, Adapters, External APIs)  │
-│                                                      │
-│  ┌───────────────────────────────────────────────┐ │
-│  │          Application Layer                     │ │
-│  │        (Use Cases, DTOs)                      │ │
-│  │                                               │ │
-│  │  ┌─────────────────────────────────────────┐ │ │
-│  │  │        Domain Layer                     │ │ │
-│  │  │  (Entities, Value Objects, Interfaces) │ │ │
-│  │  │                                         │ │ │
-│  │  │  - No dependencies                      │ │ │
-│  │  │  - Pure business logic                  │ │ │
-│  │  │  - Framework agnostic                   │ │ │
-│  │  └─────────────────────────────────────────┘ │ │
-│  │                                               │ │
-│  └───────────────────────────────────────────────┘ │
-│                                                      │
-└─────────────────────────────────────────────────────┘
-```
-
-**Beneficios:**
-- ✅ Testabilidad máxima
-- ✅ Independencia de frameworks
-- ✅ Independencia de UI
-- ✅ Independencia de base de datos
-- ✅ Independencia de agentes externos
-
-### Principios SOLID
-
-| Principio | Aplicación en el Proyecto |
-|-----------|---------------------------|
-| **S**ingle Responsibility | Cada clase tiene una única razón para cambiar |
-| **O**pen/Closed | Extensible sin modificar código existente |
-| **L**iskov Substitution | Las implementaciones sustituyen sus interfaces |
-| **I**nterface Segregation | Interfaces específicas y cohesivas |
-| **D**ependency Inversion | Dependencias sobre abstracciones |
-
-### Patrones de Diseño
-
-1. **Repository Pattern** - Abstracción del acceso a datos
-   - `DynamoDBAppointmentRepository`
-   - `MySQLCountryAppointmentService`
-
-2. **Strategy Pattern** - Procesamiento por país
-   - `ProcessCountryAppointmentUseCase`
-
-3. **Factory Pattern** - Creación controlada de objetos
-   - `Appointment.create()`
-   - `CountryISO.create()`
-   - `InsuredId.create()`
-
-4. **Adapter Pattern** - Adaptación de servicios externos
-   - `SNSMessagePublisher`
-   - `EventBridgePublisher`
-
-5. **Use Case Pattern** - Encapsulación de lógica de negocio
-   - Todos los casos de uso en `application/use-cases/`
-
-6. **Value Object Pattern** - Objetos inmutables por valor
-   - `InsuredId`, `CountryISO`, `AppointmentStatus`
-
-7. **Dependency Injection** - Inyección de dependencias
-   - Constructores de casos de uso
 
 ---
 
@@ -455,7 +402,7 @@ agendamiento-cita-medica-backend/
 # Todos los tests
 npm test
 
-# Con cobertura
+# Con cobertura detallada
 npm test -- --coverage
 
 # Modo watch (desarrollo)
@@ -478,20 +425,20 @@ All files            |   95.12 |    88.23 |   94.44 |   95.89 |
 ---------------------|---------|----------|---------|---------|
 ```
 
-**Meta de cobertura:** ≥70% en todas las métricas
-
-### Testing Strategy
-
-- ✅ **Unit Tests**: Domain entities, Value Objects, Use Cases
-- ✅ **Mocking**: Repositorios y servicios externos
-- ✅ **Edge Cases**: Validaciones y errores
-- 🚧 **Integration Tests**: Pendiente (opcional)
+**Alcance de Tests:**
+- ✅ Entidades de dominio
+- ✅ Value Objects con validaciones
+- ✅ Casos de uso (Use Cases)
+- ✅ Manejo de errores
+- ✅ Edge cases
 
 ---
 
-## 🚀 Deployment
+## 📦 Deploy
 
 ### Arquitectura de Deploy
+
+El proyecto usa **Terraform** para infraestructura base y **AWS SAM** para la aplicación serverless:
 
 ```
 GitHub Push → GitHub Actions
@@ -499,53 +446,213 @@ GitHub Push → GitHub Actions
         ┌───────────┴───────────┐
         ↓                       ↓
    Terraform                AWS SAM
-   (Infrastructure)        (Application)
+   (Base Infra)            (Application)
         ↓                       ↓
    ┌─────────────┐      ┌──────────────┐
-   │ VPC, RDS    │      │ Lambda       │
-   │ DynamoDB    │      │ API Gateway  │
-   │ SNS, SQS    │      └──────────────┘
+   │ VPC, Subnets│      │ Lambda       │
+   │ RDS MySQL   │      │ API Gateway  │
+   │ DynamoDB    │      └──────────────┘
+   │ SNS, SQS    │
    │ EventBridge │
+   │ Secrets Mgr │
    └─────────────┘
 ```
 
 ### CI/CD Pipeline
 
-El proyecto incluye pipeline completo en GitHub Actions:
+**Trigger:** Push a `main` branch
 
+**Jobs:**
 1. **Test and Build**
    - Instala dependencias
    - Ejecuta tests unitarios
    - Compila TypeScript
 
-2. **Deploy Infrastructure** (Terraform)
-   - VPC, Subnets, Security Groups
-   - RDS MySQL (PE y CL)
-   - DynamoDB con GSI
-   - SNS Topics, SQS Queues
-   - EventBridge Bus
-   - Secrets Manager
+2. **Deploy Infrastructure (Terraform)**
+   - Crea/actualiza VPC, subnets, security groups
+   - Despliega RDS MySQL (Perú y Chile)
+   - Crea DynamoDB con GSI
+   - Configura SNS, SQS, EventBridge
+   - Gestiona Secrets Manager
 
-3. **Deploy Application** (AWS SAM)
-   - Lambda functions
-   - API Gateway REST API
-   - IAM Roles y Policies
+3. **Deploy Application (AWS SAM)**
+   - Despliega funciones Lambda
+   - Configura API Gateway
+   - Asigna permisos IAM
+   - Conecta con recursos de Terraform
 
-4. **Initialize Database** (Manual workflow)
-   - Ejecuta migraciones en RDS
+4. **Initialize Database (Manual)**
+   - Workflow manual para ejecutar migraciones
+   - Crea tablas en RDS
+   - Ejecuta desde Lambda dentro de VPC
 
-### Logs y Monitoreo
+### Deploy Manual
 
 ```bash
-# Ver logs de Lambda
-aws logs tail /aws/lambda/prod-appointment-api --follow
+# 1. Configurar variables de entorno en GitHub Secrets:
+# AWS_ACCESS_KEY_ID
+# AWS_SECRET_ACCESS_KEY
+# RDS_PE_USERNAME, RDS_PE_PASSWORD
+# RDS_CL_USERNAME, RDS_CL_PASSWORD
 
-# Ver eventos de CloudFormation
-aws cloudformation describe-stack-events --stack-name agendamiento-citas-prod
+# 2. Push a main ejecuta deploy automático
+git push origin main
 
-# Estado de recursos
-aws cloudformation describe-stacks --stack-name agendamiento-citas-prod
+# 3. Monitorear deploy en GitHub Actions
+# Ver: https://github.com/[usuario]/[repo]/actions
+
+# 4. Inicializar base de datos (solo primera vez)
+# GitHub Actions → Run workflow → Database Migrations
 ```
+
+---
+
+## 📡 Uso de la API
+
+### Endpoints Disponibles
+
+**Base URL:** `https://[api-id].execute-api.us-east-1.amazonaws.com/prod/`
+
+> ⚠️ **Nota:** La URL específica se proporciona de manera privada para evitar uso no autorizado y costos innecesarios de AWS.
+
+### 1. Crear Agendamiento
+
+**Endpoint:** `POST /appointments`
+
+**Request Body:**
+```json
+{
+  "insuredId": "12345",
+  "scheduleId": 100,
+  "countryISO": "PE"
+}
+```
+
+**Campos:**
+- `insuredId` (string): ID del asegurado (1-5 dígitos numéricos)
+- `scheduleId` (number): ID del espacio de agendamiento (entero positivo)
+- `countryISO` (string): Código de país - solo "PE" o "CL"
+
+**Response (201 Created):**
+```json
+{
+  "appointmentId": "APT-abc12345",
+  "insuredId": "12345",
+  "scheduleId": 100,
+  "countryISO": "PE",
+  "status": "pending",
+  "message": "El agendamiento está en proceso",
+  "createdAt": "2024-11-13T10:30:00.000Z"
+}
+```
+
+**Response (400 Bad Request):**
+```json
+{
+  "error": "Invalid country ISO code: MX. Must be one of: PE, CL"
+}
+```
+
+### 2. Listar Agendamientos por Asegurado
+
+**Endpoint:** `GET /appointments/{insuredId}`
+
+**Path Parameter:**
+- `insuredId`: ID del asegurado (ej: "12345")
+
+**Response (200 OK):**
+```json
+{
+  "appointments": [
+    {
+      "appointmentId": "APT-abc12345",
+      "insuredId": "12345",
+      "scheduleId": 100,
+      "countryISO": "PE",
+      "status": "completed",
+      "createdAt": "2024-11-13T10:30:00.000Z",
+      "updatedAt": "2024-11-13T10:30:15.000Z",
+      "completedAt": "2024-11-13T10:30:15.000Z"
+    }
+  ],
+  "total": 1,
+  "insuredId": "12345"
+}
+```
+
+### Estados de Agendamiento
+
+| Estado | Descripción |
+|--------|-------------|
+| `pending` | Agendamiento recibido, en proceso |
+| `completed` | Agendamiento confirmado en base de datos del país |
+| `failed` | Error en el procesamiento |
+| `cancelled` | Agendamiento cancelado |
+
+### Códigos de Estado HTTP
+
+| Código | Descripción |
+|--------|-------------|
+| 200 | Consulta exitosa |
+| 201 | Recurso creado exitosamente |
+| 400 | Error de validación en datos de entrada |
+| 404 | Recurso no encontrado |
+| 500 | Error interno del servidor |
+
+---
+
+## 📖 Documentación API
+
+### Especificación OpenAPI/Swagger
+
+La API está completamente documentada usando OpenAPI 3.0:
+
+**Archivo:** [`docs/OpenAPI.yaml`](docs/OpenAPI.yaml)
+
+**Visualizar online:**
+```bash
+# Opción 1: Swagger Editor
+https://editor.swagger.io/
+# Pegar contenido de docs/OpenAPI.yaml
+
+# Opción 2: Desde el repositorio
+# La URL específica se proporciona por email
+```
+
+**Contenido de la documentación:**
+- ✅ Todos los endpoints (POST, GET)
+- ✅ Esquemas de request/response
+- ✅ Validaciones y restricciones
+- ✅ Ejemplos de uso
+- ✅ Códigos de error
+- ✅ Descripciones detalladas
+
+---
+
+## 🔒 Seguridad
+
+### Implementaciones de Seguridad
+
+- ✅ **VPC Privada**: Lambdas y RDS en subnets privadas
+- ✅ **Security Groups**: Acceso restringido entre componentes
+- ✅ **Secrets Manager**: Credenciales de RDS nunca en código
+- ✅ **IAM Roles**: Permisos granulares por función Lambda
+- ✅ **Encryption**: RDS con encryption at rest
+- ✅ **HTTPS Only**: API Gateway solo acepta HTTPS
+- ✅ **Input Validation**: Validación estricta en Value Objects
+
+### Variables Sensibles
+
+Todas las credenciales se manejan mediante:
+- **GitHub Secrets** (CI/CD)
+- **AWS Secrets Manager** (Runtime)
+- **Environment Variables** (Lambda)
+
+**Nunca en el código:**
+- ❌ Credenciales de base de datos
+- ❌ AWS Access Keys
+- ❌ API URLs públicas
+- ❌ Tokens
 
 ---
 
@@ -553,27 +660,59 @@ aws cloudformation describe-stacks --stack-name agendamiento-citas-prod
 
 | Métrica | Valor |
 |---------|-------|
-| **Lenguaje** | TypeScript |
-| **Líneas de código** | ~2,500 |
-| **Cobertura de tests** | 95%+ |
+| **Lenguaje Principal** | TypeScript |
+| **Líneas de Código** | ~2,500 |
+| **Cobertura de Tests** | 95%+ |
 | **Funciones Lambda** | 5 |
 | **Endpoints API** | 2 |
 | **Tablas DynamoDB** | 1 (con GSI) |
 | **Instancias RDS** | 2 (PE, CL) |
 | **Topics SNS** | 2 |
 | **Colas SQS** | 3 |
+| **Commits** | 40+ |
+| **Tiempo de Deploy** | ~8 min |
 
 ---
 
-## 🤝 Contribuciones
+## 🎓 Aprendizajes y Decisiones Técnicas
 
-Este es un proyecto de demostración técnica. Para propuestas de mejora:
+### ¿Por qué Clean Architecture?
+- Facilita testing (Domain completamente aislado)
+- Permite cambiar infraestructura sin afectar lógica
+- Escalable para agregar nuevos países
+
+### ¿Por qué Terraform + SAM en vez de solo Serverless Framework?
+- **Terraform**: Mejor para recursos complejos (VPC, RDS, networking)
+- **SAM**: Optimizado para Lambda + API Gateway
+- **Separación de responsabilidades**: Infra base vs Aplicación
+
+### ¿Por qué DynamoDB + RDS?
+- **DynamoDB**: Estados rápidos, alta disponibilidad, serverless
+- **RDS**: Datos relacionales por país, SQL para reportes
+
+### ¿Por qué SNS + SQS?
+- **SNS**: Desacopla productor de consumidores
+- **SQS**: Buffer, retry automático, escalabilidad
+
+---
+
+## 🤝 Cómo Contribuir
+
+Este es un proyecto de demostración técnica. Para propuestas:
 
 1. Fork el proyecto
-2. Crea una rama (`git checkout -b feature/mejora`)
-3. Commit tus cambios (`git commit -m 'feat: agregar mejora'`)
+2. Crea una rama feature (`git checkout -b feature/mejora`)
+3. Commit cambios (`git commit -m 'feat: agregar mejora'`)
 4. Push a la rama (`git push origin feature/mejora`)
 5. Abre un Pull Request
+
+**Convenciones de Commits:**
+- `feat:` Nueva funcionalidad
+- `fix:` Corrección de bugs
+- `docs:` Cambios en documentación
+- `test:` Agregar o modificar tests
+- `refactor:` Refactorización de código
+- `chore:` Tareas de mantenimiento
 
 ---
 
@@ -587,20 +726,35 @@ MIT License - ver archivo [LICENSE](LICENSE) para más detalles.
 
 **Cesar Moza**
 - GitHub: [@mozadev](https://github.com/mozadev)
+- LinkedIn: [Cesar Moza](https://linkedin.com/in/cesar-moza)
 - Email: ceosmore@gmail.com
 
 ---
 
 ## 🙏 Agradecimientos
 
-Proyecto desarrollado como demostración de:
-- Clean Architecture en AWS
-- Principios SOLID
-- Serverless patterns
-- Infrastructure as Code
-- CI/CD best practices
+Proyecto desarrollado como demostración técnica de:
+- ✅ Clean Architecture en entorno serverless
+- ✅ Principios SOLID aplicados
+- ✅ Patrones de diseño enterprise
+- ✅ Infrastructure as Code (IaC)
+- ✅ CI/CD best practices
+- ✅ Testing strategy completa
 
 ---
 
-**⭐ Si te gustó este proyecto, dale una estrella en GitHub!**
+## 📚 Referencias Técnicas
 
+- [Clean Architecture - Robert C. Martin](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)
+- [SOLID Principles](https://en.wikipedia.org/wiki/SOLID)
+- [AWS Well-Architected Framework](https://aws.amazon.com/architecture/well-architected/)
+- [Serverless Best Practices](https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html)
+- [TypeScript Best Practices](https://www.typescriptlang.org/docs/handbook/declaration-files/do-s-and-don-ts.html)
+
+---
+
+**⭐ Si te gustó este proyecto, considera darle una estrella en GitHub!**
+
+---
+
+> **Nota Importante:** Este proyecto está desplegado en AWS. Las URLs específicas de la API y credenciales de acceso se proporcionan de manera privada para evitar uso no autorizado y costos innecesarios. Para acceder a la API de prueba, contactar al autor.

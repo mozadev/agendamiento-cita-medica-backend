@@ -93,3 +93,11 @@ terraform/setup-backend.sh
 
 # Configuración obsoleta (proyecto usa Terraform + SAM)
 serverless.yml
+
+# Documentación detallada (mantener solo README.md en remoto)
+GUIA-PRUEBAS-API.md
+EXPLICACION-DEPLOY-WORKFLOW.md
+INICIALIZAR-BASE-DATOS.md
+
+# Plantilla de email con URLs privadas (no subir)
+EMAIL-TEMPLATE.md
