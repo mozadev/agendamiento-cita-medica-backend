@@ -108,6 +108,7 @@ jobs:
           set +e  # No salir inmediatamente en error
           aws lambda invoke \
             --function-name "$FUNCTION_NAME" \
+            --cli-binary-format raw-in-base64-out \
             --payload "$PAYLOAD" \
             --region ${{ env.AWS_REGION }} \
             --cli-read-timeout 900 \
