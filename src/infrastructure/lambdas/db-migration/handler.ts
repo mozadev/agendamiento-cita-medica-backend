@@ -14,7 +14,8 @@ interface RDSSecret {
   host: string;
   username: string;
   password: string;
-  dbname: string;
+  database?: string;
+  dbname?: string;  // Legacy support
   port?: number;
 }
 
@@ -83,7 +84,12 @@ async function getRDSSecret(secretArn: string): Promise<RDSSecret> {
 }
 
 async function runMigration(secret: RDSSecret, action: string): Promise<any> {
-  const { host, username, password, dbname, port = 3306 } = secret;
+  const { host, username, password, database, dbname: legacyDbname, port = 3306 } = secret;
+  const dbname = database || legacyDbname;
+
+  if (!dbname) {
+    throw new Error('Database name not found in secret (neither "database" nor "dbname")');
+  }
 
   let connection: mysql.Connection | null = null;
 
