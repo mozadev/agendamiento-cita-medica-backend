@@ -36,10 +36,8 @@ info:
     url: https://opensource.org/licenses/MIT
 
 servers:
-  - url: https://api.example.com/dev
-    description: Development environment
   - url: https://api.example.com/prod
-    description: Production environment
+    description: Production environment (URL provided privately)
 
 tags:
   - name: appointments

@@ -607,13 +607,13 @@ git push origin main
 
 La API está completamente documentada usando OpenAPI 3.0:
 
-**Archivo:** [`docs/OpenAPI.yaml`](docs/OpenAPI.yaml)
+**Archivo:** [`docs/openapi.yaml`](docs/openapi.yaml)
 
 **Visualizar online:**
 ```bash
 # Opción 1: Swagger Editor
 https://editor.swagger.io/
-# Pegar contenido de docs/OpenAPI.yaml
+# Pegar contenido de docs/openapi.yaml
 
 # Opción 2: Desde el repositorio
 # La URL específica se proporciona por email
